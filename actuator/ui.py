@@ -8,7 +8,7 @@ from datetime import date, datetime
 from pathlib import Path
 
 from PySide6.QtCore import (
-    Property, QFileSystemWatcher, QPoint, QPropertyAnimation, QRectF, QSettings, QSize, Qt, QTimer, QUrl, Signal,
+    Property, QFileSystemWatcher, QItemSelectionModel, QPoint, QPropertyAnimation, QRectF, QSettings, QSize, Qt, QTimer, QUrl, Signal,
 )
 from PySide6.QtGui import (
     QColor, QDesktopServices, QFontDatabase, QIcon, QKeySequence, QPainter, QPixmap, QShortcut,
@@ -281,6 +281,10 @@ class SidebarTree(QTreeWidget):
         self.setAcceptDrops(True)
         self.setDropIndicatorShown(True)
         self.setDragDropMode(QTreeWidget.DragDropMode.InternalMove)
+
+    def mousePressEvent(self, event):
+        self.last_button = event.button()  # itemClicked fires on release, when this is no longer known
+        super().mousePressEvent(event)
 
     def _target_folder(self, pos):
         """Folder under the cursor, or None to take the app out of its folder."""
@@ -1515,7 +1519,9 @@ class MainWindow(QMainWindow):
     def _fill_sidebar(self, select=None):
         keep = self.current
         self._pending_select = select
-        collapsed = set(self.settings.value("sidebar/collapsed", [], type=list) or [])
+        collapsed = self._collapsed()
+        animated = self.sidebar.isAnimated()
+        self.sidebar.setAnimated(False)  # rebuilt folders appear in place instead of sliding open
         self.sidebar.blockSignals(True)
         self.sidebar.clear()
 
@@ -1567,7 +1573,16 @@ class MainWindow(QMainWindow):
             if not self.config.folder_of(app):
                 items[("app", app)] = entry(apps_mod.display_name(app), apps_mod.icon_name(app), ("app", app))
         self.sidebar.blockSignals(False)
-        self.sidebar.setCurrentItem(items.get(keep, items[("global", None)]))
+        # Select without scrolling to it: setCurrentItem would also open a collapsed folder
+        # to reveal an app inside it, undoing the user's choice to keep it closed.
+        target = items.get(keep, items[("global", None)])
+        self.sidebar.setAutoScroll(False)  # scrolling to the item is what opens its folder
+        self.sidebar.selectionModel().setCurrentIndex(
+            self.sidebar.indexFromItem(target),
+            QItemSelectionModel.SelectionFlag.ClearAndSelect | QItemSelectionModel.SelectionFlag.Rows)
+        self.sidebar.setAutoScroll(True)
+        self._apply_collapsed()  # in case anything above opened a folder on its own
+        QTimer.singleShot(0, lambda: self.sidebar.setAnimated(animated))
 
     def _folder_toggled(self, item, expanded: bool):
         p = item.data(0, ROLE)
@@ -1575,9 +1590,28 @@ class MainWindow(QMainWindow):
             return
         if not self.config.folder_icons.get(p[1]):  # a chosen icon stays the same open or closed
             item.setIcon(0, icons.icon("folder-open" if expanded else "folder"))
-        collapsed = set(self.settings.value("sidebar/collapsed", [], type=list) or [])
-        (collapsed.discard if expanded else collapsed.add)(p[1])
+        # Saving happens only on the user's own clicks (_sidebar_clicked): Qt also opens folders
+        # by itself, and recording those would reopen folders the user had closed.
+
+    def _collapsed(self) -> set[str]:
+        value = self.settings.value("sidebar/collapsed", [])
+        if isinstance(value, str):  # QSettings returns a lone item as a plain string
+            value = [value]
+        return set(value or [])
+
+    def _set_collapsed(self, folder: str, closed: bool):
+        collapsed = self._collapsed()
+        (collapsed.add if closed else collapsed.discard)(folder)
         self.settings.setValue("sidebar/collapsed", sorted(collapsed))
+
+    def _apply_collapsed(self):
+        """Put every folder back the way the user left it."""
+        collapsed = self._collapsed()
+        for i in range(self.sidebar.topLevelItemCount()):
+            item = self.sidebar.topLevelItem(i)
+            p = item.data(0, ROLE)
+            if isinstance(p, tuple) and p[0] == "folder":
+                item.setExpanded(p[1] not in collapsed)
 
     def _sidebar_changed(self, item, prev):
         if not item:
@@ -1593,8 +1627,10 @@ class MainWindow(QMainWindow):
 
     def _sidebar_clicked(self, item, _col):
         p = item.data(0, ROLE)
-        if isinstance(p, tuple) and p[0] == "folder" and QApplication.mouseButtons() != Qt.MouseButton.RightButton:
+        if isinstance(p, tuple) and p[0] == "folder" and \
+                getattr(self.sidebar, "last_button", Qt.MouseButton.LeftButton) == Qt.MouseButton.LeftButton:
             item.setExpanded(not item.isExpanded())
+            self._set_collapsed(p[1], not item.isExpanded())
 
     def _sidebar_menu(self, pos):
         item = self.sidebar.itemAt(pos)
@@ -1684,8 +1720,14 @@ class MainWindow(QMainWindow):
 
     def change_folder_icon(self, folder: str):
         picker = iconpicker.IconPicker(self, self.config.folder_icons.get(folder), f"Icon for {folder}")
-        if picker.exec() and self.apply_now(lambda c: c.set_folder_icon(folder, picker.chosen)):
-            self._fill_sidebar()
+        if not picker.exec() or not self.apply_now(lambda c: c.set_folder_icon(folder, picker.chosen)):
+            return
+        # Swap the icon in place: rebuilding the sidebar would visibly close and reopen the folder.
+        for i in range(self.sidebar.topLevelItemCount()):
+            item = self.sidebar.topLevelItem(i)
+            if item.data(0, ROLE) == ("folder", folder):
+                item.setIcon(0, icons.lucide(picker.chosen) if picker.chosen
+                             else icons.icon("folder-open" if item.isExpanded() else "folder"))
 
     def add_app(self):
         dialog = AddAppDialog(self, list(self.config.folders), self.config.apps)
