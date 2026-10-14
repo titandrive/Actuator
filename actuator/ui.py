@@ -1,15 +1,18 @@
 """Main window."""
 
+import html
 import re
 import shutil
 import subprocess
 from datetime import date, datetime
 from pathlib import Path
 
-from PySide6.QtCore import QFileSystemWatcher, QPoint, QSettings, QSize, Qt, QTimer, Signal
-from PySide6.QtGui import QAction, QIcon, QKeySequence, QShortcut
+from PySide6.QtCore import QFileSystemWatcher, QPoint, QSettings, QSize, Qt, QTimer, QUrl, Signal
+from PySide6.QtGui import (
+    QAction, QCursor, QDesktopServices, QFontDatabase, QIcon, QKeySequence, QShortcut,
+)
 from PySide6.QtWidgets import (
-    QApplication, QDialog, QListWidget, QListWidgetItem, QToolTip, QFormLayout, QSpinBox, QDialogButtonBox, QFileDialog, QFrame, QGridLayout, QHBoxLayout,
+    QApplication, QDialog, QTextBrowser, QListWidget, QListWidgetItem, QToolTip, QFormLayout, QSpinBox, QDialogButtonBox, QFileDialog, QFrame, QGridLayout, QHBoxLayout,
     QCheckBox, QComboBox, QGroupBox, QInputDialog, QLabel, QLineEdit, QMainWindow, QMenu,
     QMessageBox, QPlainTextEdit, QPushButton, QScrollArea, QSizePolicy,
     QSplitter, QStackedWidget, QTabWidget, QToolBar, QToolButton, QTreeWidget,
@@ -21,6 +24,7 @@ from . import REPO_URL, __version__
 from . import apps as apps_mod
 from . import config as cfg
 from . import copying
+from . import diffing
 from . import describe as d
 from . import keys
 from . import writer
@@ -95,13 +99,6 @@ def button_name(b: cfg.Button) -> str:
 
 def scope_title(scope: str, app: str | None) -> str:
     return apps_mod.display_name(app) if scope == "app" else scope.capitalize()
-
-
-def app_counts(c: cfg.Config) -> dict[str, int]:
-    counts = {"Global": len(c.bindings_for("global")) + len(c.bindings_for("custom"))}
-    for app in c.apps:
-        counts[apps_mod.display_name(app)] = len(c.bindings_for("app", app))
-    return counts
 
 
 class AddAppDialog(QDialog):
@@ -209,6 +206,53 @@ class AddAppDialog(QDialog):
 
     def folder(self) -> str | None:
         return self.folder_box.currentData()
+
+
+class RestorePreview(QDialog):
+    """Lists only what restoring a version would change: + added, − removed, ~ changed."""
+
+    def __init__(self, parent, groups: dict[str, list[tuple[str, str, str, str]]] | None):
+        super().__init__(parent)
+        self.setWindowTitle("Restore this version?")
+        colors = {"+": "#3a9a5b", "−": "#d24545", "~": "#c58a00"}
+        if groups is None:
+            body = "<p>Your current config can't be read, so the changes can't be listed.</p>"
+        elif not groups:
+            body = "<p>This version has the same bindings and device settings as your current config.</p>"
+        else:
+            muted = self.palette().placeholderText().color().name()
+            normal = self.palette().text().color().name()  # Qt rich text has no "inherit"; use the theme's
+            rows = []
+            for group, lines in groups.items():
+                rows.append(f"<tr><td colspan='4' style='padding:10px 0 4px'><b>{html.escape(group)}</b></td></tr>")
+                for mark, what, before, after in lines:
+                    rows.append(
+                        f"<tr><td style='color:{colors[mark]}; font-weight:600; padding:2px 6px 2px 8px'>{mark}</td>"
+                        f"<td style='padding:2px 14px 2px 0'>{html.escape(what)}</td>"
+                        f"<td style='padding:2px 8px 2px 0; color:{muted if mark == '+' else normal}'>"
+                        f"{html.escape(before)}</td>"
+                        f"<td style='padding:2px 0'>→&nbsp;<span style='color:{muted if mark == '−' else normal}'>"
+                        f"{html.escape(after)}</span></td></tr>")
+            body = f"<table cellspacing='0'>{''.join(rows)}</table>"
+        intro = QLabel("Restoring makes these changes to your config:" if groups else "")
+        intro.setVisible(bool(groups))
+        view = QTextBrowser()
+        view.setHtml(body)
+        view.setOpenLinks(False)
+        note = QLabel("Your current config is kept in Recent versions first, so this can be undone.")
+        note.setWordWrap(True)
+        note.setStyleSheet("color: palette(placeholder-text);")
+        buttons = QDialogButtonBox(QDialogButtonBox.StandardButton.Cancel)
+        restore = buttons.addButton("Restore", QDialogButtonBox.ButtonRole.AcceptRole)
+        restore.setDefault(True)
+        buttons.accepted.connect(self.accept)
+        buttons.rejected.connect(self.reject)
+        layout = QVBoxLayout(self)
+        layout.addWidget(intro)
+        layout.addWidget(view, 1)
+        layout.addWidget(note)
+        layout.addWidget(buttons)
+        self.resize(560, 400)
 
 
 class SidebarTree(QTreeWidget):
@@ -540,6 +584,7 @@ class MainWindow(QMainWindow):
         self._issues = ""
         self._last_written: str | None = None
         self._clipboard: list[tuple[str, dict]] = []
+        self.broken: str | None = None  # the YAML error, while config.yaml can't be read
 
         self._build_toolbar()
         self.sidebar = SidebarTree()
@@ -575,7 +620,13 @@ class MainWindow(QMainWindow):
         split.addWidget(side)
         split.addWidget(self.pages)
         split.setStretchFactor(1, 1)
-        self.setCentralWidget(split)
+        self.body = split
+        central = QWidget()
+        cl = QVBoxLayout(central)
+        cl.setContentsMargins(0, 0, 0, 0)
+        cl.addWidget(self._build_broken_bar())
+        cl.addWidget(split, 1)
+        self.setCentralWidget(central)
 
         self._apply_features()
         QTimer.singleShot(0, self._warn_system_config)
@@ -681,7 +732,85 @@ class MainWindow(QMainWindow):
     def _apply_features(self):
         self.yaml_action.setVisible(self.feature("yaml_editor"))
 
-    def open_yaml_editor(self):
+    # A config.yaml that can't be read -------------------------------------
+
+    def _build_broken_bar(self) -> QWidget:
+        """A KDE-style error banner: tinted, rounded, and readable in light and dark themes."""
+        holder = QWidget()
+        outer = QVBoxLayout(holder)
+        outer.setContentsMargins(8, 8, 8, 0)
+        bar = QFrame()
+        bar.setObjectName("broken")
+        bar.setStyleSheet("QFrame#broken { background: rgba(218, 68, 83, 0.12); "
+                          "border: 1px solid rgba(218, 68, 83, 0.65); border-radius: 6px; }"
+                          "QFrame#broken QLabel { background: transparent; border: none; }")
+        outer.addWidget(bar)
+        icon = QLabel()
+        icon.setPixmap(QIcon.fromTheme("dialog-error").pixmap(22, 22))
+        title = QLabel("config.yaml can't be read. Nothing will be saved until it's fixed.")
+        title.setStyleSheet("font-weight: 600;")
+        self.broken_label = QLabel()
+        self.broken_label.setWordWrap(True)
+        self.broken_label.setTextFormat(Qt.TextFormat.RichText)
+        self.broken_label.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
+        edit = QPushButton(QIcon.fromTheme("text-x-script"), "Edit in YAML editor")
+        edit.clicked.connect(lambda: self.open_yaml_editor(force=True))
+        ext = QPushButton(QIcon.fromTheme("document-edit"), "Open in text editor")
+        ext.clicked.connect(lambda: QDesktopServices.openUrl(QUrl.fromLocalFile(str(cfg.CONFIG_PATH))))
+        restore = QPushButton(QIcon.fromTheme("document-open-recent"), "Restore a previous version")
+        restore.clicked.connect(lambda: (self._fill_recent(), self.recent.exec(QCursor.pos())))
+
+        text = QVBoxLayout()
+        text.setSpacing(4)
+        text.addWidget(title)
+        text.addWidget(self.broken_label)
+        top = QHBoxLayout()
+        top.addWidget(icon, 0, Qt.AlignmentFlag.AlignTop)
+        top.addLayout(text, 1)
+        buttons = QHBoxLayout()
+        buttons.addStretch(1)
+        for b in (edit, ext, restore):
+            buttons.addWidget(b)
+        inner = QVBoxLayout(bar)
+        inner.setContentsMargins(12, 10, 12, 10)
+        inner.setSpacing(8)
+        inner.addLayout(top)
+        inner.addLayout(buttons)
+        holder.setVisible(False)
+        self.broken_bar = holder
+        return holder
+
+    def _set_broken(self, error):
+        """Show or clear the "can't read config.yaml" state. While broken, nothing is written,
+        so the file on disk (with someone's half-finished edit) is never overwritten."""
+        if error is None:
+            self.broken = None
+        else:
+            try:
+                ok, message, _line = yaml_editor.check(cfg.CONFIG_PATH.read_text())
+            except OSError as e:
+                ok, message = False, str(e)
+            self.broken = str(error) if ok else message
+        self.broken_bar.setVisible(self.broken is not None)
+        if self.broken:
+            message, _, line = self.broken.partition("\n")
+            mono = QFontDatabase.systemFont(QFontDatabase.SystemFont.FixedFont).family()
+            self.broken_label.setText(
+                html.escape(message) + (f"<br><span style='font-family:\"{mono}\"; white-space:pre'>"
+                                        f"{html.escape(line.strip())}</span>" if line.strip() else ""))
+        else:
+            self.broken_label.clear()
+        self.body.setEnabled(self.broken is None and self.config is not None)
+        self._update_status()
+
+    def _blocked(self) -> bool:
+        if self.broken is None:
+            return False
+        QMessageBox.warning(self, "Actuator", "config.yaml has an error, so Actuator won't write to it "
+                                              "until it's fixed. Use the red bar above to fix or restore it.")
+        return True
+
+    def open_yaml_editor(self, force: bool = False):
         if not self._ask_discard("edit the YAML"):
             return
         path = cfg.CONFIG_PATH
@@ -708,7 +837,12 @@ class MainWindow(QMainWindow):
         snaps = writer.snapshots()
         for snap in snaps:
             stamp = datetime.strptime(snap.stem.removeprefix("config-"), "%Y%m%d-%H%M%S")
-            self.recent.addAction(f"Before save at {stamp:%b %d, %H:%M:%S}", lambda s=snap: self.restore(s))
+            try:
+                broken = not yaml_editor.check(snap.read_text())[0]
+            except OSError:
+                broken = True
+            label = f"Before save at {stamp:%b %d, %H:%M:%S}" + ("  (has errors)" if broken else "")
+            self.recent.addAction(label, lambda s=snap: self.restore(s))
         if orig.exists():
             if snaps:
                 self.recent.addSeparator()
@@ -734,7 +868,7 @@ class MainWindow(QMainWindow):
                 else " &nbsp; · &nbsp; <span style='color:#d24545'>⚠ Config issues (hover for details)</span>")
         self.status.setText(f"<b>InputActions</b> &nbsp; {state}{tail}")
         self.status.setToolTip(self._issues)
-        self.save_button.setEnabled(self.dirty)
+        self.save_button.setEnabled(self.dirty and getattr(self, "broken", None) is None)
         self.save_button.setToolTip("Save binding changes and reload InputActions (Ctrl+S)" if self.dirty
                                     else "Nothing to save")
         self.setWindowTitle(("* " if self.dirty else "") + "Actuator")
@@ -828,6 +962,8 @@ class MainWindow(QMainWindow):
 
         It's applied to the file as it is on disk, so unsaved binding edits stay unsaved.
         """
+        if self._blocked():
+            return False
         if not self._confirm_first_write():
             return False
         try:
@@ -846,6 +982,8 @@ class MainWindow(QMainWindow):
         return True
 
     def save(self):
+        if self._blocked():
+            return
         if not self._confirm_first_write():
             return
         try:
@@ -862,26 +1000,25 @@ class MainWindow(QMainWindow):
             return
         try:
             text = Path(source).read_text()
-            new = YAML(typ="rt").load(text)
-            if not isinstance(new, dict):
-                raise ValueError("That file isn't an InputActions config.")
-            before = app_counts(self.config)
-            after = app_counts(cfg.load(Path(source)))
-        except Exception as e:  # noqa: BLE001
-            QMessageBox.critical(self, "Actuator", f"Couldn't read {source}\n\n{e}")
+        except OSError as e:
+            QMessageBox.critical(self, "Actuator", f"Couldn't open {source}\n\n{e}")
             return
-        lines = [
-            f"{name}: {before.get(name, 0)} → {after.get(name, 0)}"
-            if before.get(name, 0) != after.get(name, 0) else f"{name}: unchanged"
-            for name in sorted(set(before) | set(after))
-        ]
-        answer = QMessageBox.question(
-            self, "Restore this version?",
-            "Bindings per app:\n\n" + "\n".join(lines) + "\n\nYour current config is saved to Recent versions first.",
-            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.Cancel,
-        )
-        if answer != QMessageBox.StandardButton.Yes:
-            return
+        ok, message, _line = yaml_editor.check(text)
+        if not ok:
+            # A broken version can still hold edits worth having; restoring it shows the red bar to fix it.
+            answer = QMessageBox.warning(
+                self, "This version has an error",
+                f"This version isn't valid YAML:\n\n{message}\n\nRestore it anyway? Actuator will show "
+                "the error so you can fix it.",
+                QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.Cancel,
+            )
+            if answer != QMessageBox.StandardButton.Yes:
+                return
+        else:
+            other = cfg.load(Path(source))
+            groups = diffing.changes(self.config, other) if self.config and not self.broken else None
+            if not RestorePreview(self, groups).exec():
+                return
         self._last_written = text
         previous = writer.restore(cfg.CONFIG_PATH, Path(source))
         self.dirty = False
@@ -937,8 +1074,9 @@ class MainWindow(QMainWindow):
         try:
             self.config = cfg.load()
         except Exception as e:  # noqa: BLE001 - any parse error should be shown, not crash
-            QMessageBox.critical(self, "Actuator", f"Couldn't read {cfg.CONFIG_PATH}\n\n{e}")
+            self._set_broken(e)
             return
+        self._set_broken(None)
         self.dirty = False
         self._check_issues()
         self._fill_sidebar()
