@@ -26,6 +26,7 @@ from . import apps as apps_mod
 from . import config as cfg
 from . import copying
 from . import diffing
+from . import gitsync
 from . import describe as d
 from . import keys
 from . import pause
@@ -310,6 +311,8 @@ DEV_FEATURES = [  # (settings key, label, tooltip) — all off by default
     ("device_settings", "Enable Device Settings", "Swipe angles, thresholds and timeouts for your devices."),
     ("yaml_editor", "Enable Full YAML Editor", "Adds a YAML button to the toolbar to edit config.yaml directly."),
     ("only_if", "Enable Only If Conditions", "Shows the condition builder in the binding editor."),
+    ("git_autocommit", "Enable Git Auto-Commit",
+     "Commits config.yaml to its git repository whenever Actuator saves it. See the README for setup."),
 ]
 
 
@@ -403,6 +406,47 @@ class OptionsDialog(QDialog):
             box.setToolTip(note)
             self.dev_layout.addWidget(box)
             self.features[key] = box
+        # Git auto-commit settings, shown under its toggle.
+        self.git_box = QWidget()
+        gl = QVBoxLayout(self.git_box)
+        gl.setContentsMargins(26, 0, 0, 4)
+        when_row = QHBoxLayout()
+        when_row.addWidget(QLabel("Commit:"))
+        self.git_when = QComboBox()
+        self.git_when.addItem("When I save", "saves")
+        self.git_when.addItem("Every change, including folders and apps", "all")
+        self.git_when.setCurrentIndex(max(self.git_when.findData(
+            self.settings.value("git/when", "saves", type=str)), 0))
+        when_row.addWidget(self.git_when)
+        when_row.addStretch(1)
+        gl.addLayout(when_row)
+        self.git_push = QCheckBox("Push after committing")
+        self.git_push.setChecked(self.settings.value("git/push", False, type=bool))
+        gl.addWidget(self.git_push)
+        # Setup checklist: what's ready, with a link to the instructions if something isn't.
+        st = gitsync.status(cfg.CONFIG_PATH)
+        ok_mark = "<span style='color:#2e9e5b'>✓</span>"
+        bad_mark = "<span style='color:#d24545'>✗</span>"
+        warn_mark = "<span style='color:#c58a00'>⚠</span>"
+        rows = [f"{ok_mark if st['git'] else bad_mark} Git is installed"]
+        if st["git"]:
+            rows.append(f"{ok_mark} Config folder is a git repository: {html.escape(str(st['repo']))}"
+                        if st["repo"] else f"{bad_mark} The config folder isn't a git repository yet")
+        if st["repo"]:
+            rows.append(f"{ok_mark} Pushes to {html.escape(st['remote'])}" if st["remote"]
+                        else f"{warn_mark} No remote to push to (only needed for pushing)")
+        if not st["repo"] or not st["remote"]:
+            rows.append(f"<a href='{REPO_URL}#git-auto-commit-developer-mode'>How to set it up</a>")
+        checklist = QLabel("<br>".join(rows))
+        checklist.setWordWrap(True)
+        checklist.setOpenExternalLinks(True)
+        checklist.setTextFormat(Qt.TextFormat.RichText)
+        gl.addWidget(checklist)
+        git_toggle = self.features["git_autocommit"]
+        self.dev_layout.insertWidget(self.dev_layout.indexOf(git_toggle) + 1, self.git_box)
+        self.git_box.setVisible(git_toggle.isChecked())
+        git_toggle.toggled.connect(lambda on: (self.git_box.setVisible(on), self.adjustSize()))
+
         dev_buttons = QHBoxLayout()
         devices = QPushButton(QIcon.fromTheme("input-mouse"), "Device settings…")
         devices.clicked.connect(parent.open_device_settings)
@@ -466,6 +510,8 @@ class OptionsDialog(QDialog):
         if self.dev_box.isVisible():
             for box in self.features.values():
                 box.setChecked(False)
+            self.git_when.setCurrentIndex(self.git_when.findData("saves"))
+            self.git_push.setChecked(False)
 
     def _toast(self, text: str):
         """A small Android-style message just above the version label."""
@@ -715,6 +761,16 @@ class MainWindow(QMainWindow):
         self._last_written: str | None = None
         self._clipboard: list[tuple[str, dict]] = []
         self.broken: str | None = None  # the YAML error, while config.yaml can't be read
+        self._pusher = gitsync.Pusher(self)
+        self._pusher.done.connect(self._pushed)
+        # Always-visible status bar, with a lasting git result on the right when auto-commit is on.
+        self.git_status = QLabel()
+        self.git_status.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self.git_status.setOpenExternalLinks(True)  # a successful result links to the repo
+        self.statusBar().addWidget(self.git_status, 1)  # stretch: centered across the bar
+        self.git_status.setVisible(False)
+        self._git_hide = QTimer(self, singleShot=True, interval=10_000)
+        self._git_hide.timeout.connect(lambda: self.git_status.setVisible(False))
         # Undo history of unsaved changes: each entry is the whole config as text.
         # history[0] is what's saved; the last entry is the current state.
         self.history: list[str] = []
@@ -866,6 +922,8 @@ class MainWindow(QMainWindow):
             self.settings.setValue(f"tabs/{title}", on)
         for key, box in dialog.features.items():
             self.settings.setValue(f"dev/{key}", box.isChecked())
+        self.settings.setValue("git/when", dialog.git_when.currentData())
+        self.settings.setValue("git/push", dialog.git_push.isChecked())
         self._apply_features()
         self._fill_sidebar()
 
@@ -899,6 +957,8 @@ class MainWindow(QMainWindow):
 
     def _apply_features(self):
         self.yaml_action.setVisible(self.feature("yaml_editor"))
+        if not self.feature("git_autocommit"):
+            self.git_status.setVisible(False)
 
     # A config.yaml that can't be read -------------------------------------
 
@@ -986,11 +1046,12 @@ class MainWindow(QMainWindow):
         if editor.exec() != QDialog.DialogCode.Accepted:
             return
         text = editor.text()
+        old = self._disk_text()
         self._last_written = text
         previous = writer.snapshot(path)
         writer.write_atomic(path, text)
         self.dirty = False
-        self._after_write(previous)
+        self._after_write(previous, old)
 
     def open_device_settings(self):
         if not devices_mod.confirm_open(self, self.settings):
@@ -1166,6 +1227,7 @@ class MainWindow(QMainWindow):
             return False
         if not self._confirm_first_write():
             return False
+        old = self._disk_text()
         try:
             disk = cfg.load()
             change(disk)
@@ -1188,6 +1250,7 @@ class MainWindow(QMainWindow):
         self.future = [carried(x) for x in self.future]
         run_ctl("config", "reload")
         self._check_issues()
+        self._git_sync(old, "save" if take_snapshot else "instant")
         return True
 
     def save(self):
@@ -1195,6 +1258,7 @@ class MainWindow(QMainWindow):
             return
         if not self._confirm_first_write():
             return
+        old = self._disk_text()
         try:
             self._last_written = writer.render(self.config)
             previous = writer.save(self.config)
@@ -1202,7 +1266,7 @@ class MainWindow(QMainWindow):
             QMessageBox.critical(self, "Actuator", f"Couldn't save. Your config wasn't changed.\n\n{e}")
             return
         self.dirty = False
-        self._after_write(previous)  # reloads, which also starts a fresh undo history
+        self._after_write(previous, old)  # reloads, which also starts a fresh undo history
 
     def open_versions(self):
         dialog = versions.VersionsDialog(self, None if self.broken else self.config)
@@ -1237,12 +1301,70 @@ class MainWindow(QMainWindow):
             groups = diffing.changes(self.config, other) if self.config and not self.broken else None
             if not RestorePreview(self, groups).exec():
                 return
+        old = self._disk_text()
         self._last_written = text
         previous = writer.restore(cfg.CONFIG_PATH, Path(source))
         self.dirty = False
-        self._after_write(previous)
+        self._after_write(previous, old)
 
-    def _after_write(self, previous: Path | None):
+    def _disk_text(self) -> str | None:
+        try:
+            return cfg.CONFIG_PATH.read_text()
+        except OSError:
+            return None
+
+    def _show_git(self, state: str, text: str, detail: str = "", link: str | None = None):
+        """A git result, centered in the status bar for 10 seconds (or until the push finishes).
+        state: ok, busy, error, or warn. A link makes the message open it when clicked."""
+        color = {"ok": "#2e9e5b", "busy": self.palette().placeholderText().color().name(),
+                 "error": "#d24545", "warn": "#c58a00"}[state]
+        icon = {"ok": "✓", "busy": "⏳", "error": "✗", "warn": "⚠"}[state]
+        body = f"{icon} {html.escape(text)}"
+        if link:
+            body = (f"<a href='{html.escape(link)}' style='color:{color}; text-decoration:none'>"
+                    f"{body} ↗</a>")
+        self.git_status.setText(f"<span style='color:{color}'>{body}</span>")
+        self.git_status.setToolTip(f"Open {link}\n\n{detail}" if link and detail else (detail or text))
+        self.git_status.setVisible(True)
+        if state == "busy":
+            self._git_hide.stop()
+        else:
+            self._git_hide.start()
+
+    def _git_sync(self, old_text: str | None, kind: str):
+        """Commit config.yaml (and push) if that developer option is on. kind is "save" for
+        Save-like writes, "instant" for organizing changes such as folders."""
+        if not self.feature("git_autocommit"):
+            return
+        if kind == "instant" and self.settings.value("git/when", "saves", type=str) != "all":
+            return
+        path = cfg.CONFIG_PATH
+        root = gitsync.repo_root(path)
+        if root is None:
+            self._show_git("warn", "Not committed: the config folder isn't a git repository",
+                           "See the README's Git auto-commit section for setup.")
+            return
+        new_text = self._disk_text() or ""
+        ok, out = gitsync.commit(path, gitsync.message(old_text, new_text))
+        if not ok:
+            self._show_git("error", "Commit failed", out or "git gave no details")
+            return
+        if out == "nothing to commit":
+            return
+        if self.settings.value("git/push", False, type=bool):
+            self._show_git("busy", "Committed. Pushing…", out)
+            self._pusher.push(root)
+        else:
+            self._show_git("ok", "Committed", out)  # not on the remote, so nothing to link to
+
+    def _pushed(self, ok: bool, out: str):
+        if ok:
+            root = gitsync.repo_root(cfg.CONFIG_PATH)
+            self._show_git("ok", "Committed and pushed", out, gitsync.commit_url(root) if root else None)
+        else:
+            self._show_git("error", "Committed, but the push failed", out or "git gave no details")
+
+    def _after_write(self, previous: Path | None, old_text: str | None = None):
         run_ctl("config", "reload")
         self.load()
         if self._issues and previous:
@@ -1256,6 +1378,8 @@ class MainWindow(QMainWindow):
                 writer.restore(cfg.CONFIG_PATH, previous)
                 run_ctl("config", "reload")
                 self.load()
+                return  # back where it was: nothing to commit
+        self._git_sync(old_text, "save")
 
     def export_yaml(self):
         default = Path.home() / f"inputactions-{date.today().isoformat()}.yaml"

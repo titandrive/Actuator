@@ -71,7 +71,37 @@ layout and keeps your original as `config.yaml.original`.
 ## Developer mode
 
 Click the version number in Options ten times. Developer mode adds toggles for device settings
-(swipe angles, thresholds, timeouts), the full YAML editor, and the condition builder.
+(swipe angles, thresholds, timeouts), the full YAML editor, the condition builder, and git auto-commit.
+
+## Git auto-commit (developer mode)
+
+Actuator can commit `config.yaml` to git every time it saves, and optionally push it, so your setup is
+versioned and backed up. Turn it on in Options → Developer Options → Enable Git Auto-Commit, then choose
+when to commit (when you save, or on every change including folders and apps) and whether to push.
+
+Actuator only commits `config.yaml`; anything else in the repository is left alone. Commit messages
+describe the change, for example `Actuator: Firefox: ~ Meta+W: Ctrl+W → Ctrl+T`.
+
+You set up the repository once yourself:
+
+```bash
+cd ~/.config/inputactions
+git init
+git add config.yaml
+git commit -m "Initial InputActions config"
+```
+
+To push as well, create an empty repository on GitHub (or anywhere else), then:
+
+```bash
+git branch -M main
+git remote add origin git@github.com:YOUR-NAME/inputactions-config.git
+git push -u origin main
+```
+
+Pushing runs in the background without asking for a password, so it needs credentials that work on their
+own: an SSH key added to your account, or a git credential helper. Options shows whether git, the
+repository and the remote are set up.
 
 ## License
 
