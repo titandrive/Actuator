@@ -889,6 +889,9 @@ class MainWindow(QMainWindow):
         self.sidebar.setRootIsDecorated(False)
         self.sidebar.setIndentation(14)
         self.sidebar.itemClicked.connect(self._sidebar_clicked)
+        self.sidebar.itemChanged.connect(self._rename_edited)
+        # After an edit commits, itemChanged runs first; so a close that's still "renaming" was a cancel.
+        self.sidebar.itemDelegate().closeEditor.connect(lambda *_: QTimer.singleShot(0, self._rename_closed))
         self.sidebar.itemExpanded.connect(lambda i: self._folder_toggled(i, True))
         self.sidebar.itemCollapsed.connect(lambda i: self._folder_toggled(i, False))
         self.sidebar.currentItemChanged.connect(self._sidebar_changed)
@@ -1657,7 +1660,7 @@ class MainWindow(QMainWindow):
             self._add_copy_all(menu, ("global", None))
         elif isinstance(payload, tuple) and payload[0] == "folder":
             folder = payload[1]
-            menu.addAction(icons.icon("edit-rename"), "Rename…", lambda: self.rename_folder(folder))
+            menu.addAction(icons.icon("edit-rename"), "Rename", lambda: self.rename_folder(folder))
             menu.addAction(icons.lucide("smile"), "Change icon…", lambda: self.change_folder_icon(folder))
             menu.addAction(icons.icon("edit-delete"), "Delete folder", lambda: self.delete_folder(folder))
         else:
@@ -1700,10 +1703,34 @@ class MainWindow(QMainWindow):
             self._fill_sidebar()
 
     def rename_folder(self, folder: str):
-        name = self._ask_folder_name("Rename folder", folder)
-        if name and name != folder:
-            if self.apply_now(lambda c: c.rename_folder(folder, name)):
-                self._fill_sidebar()
+        """Edit the folder's name in place, in the sidebar. Enter saves, Esc cancels."""
+        item = next((self.sidebar.topLevelItem(i) for i in range(self.sidebar.topLevelItemCount())
+                     if self.sidebar.topLevelItem(i).data(0, ROLE) == ("folder", folder)), None)
+        if item is None:
+            return
+        self.sidebar.blockSignals(True)
+        item.setText(0, folder)  # just the name while editing, without the app count
+        item.setFlags(item.flags() | Qt.ItemFlag.ItemIsEditable)
+        self.sidebar.blockSignals(False)
+        self._renaming = (item, folder)
+        self.sidebar.editItem(item, 0)
+
+    def _rename_edited(self, item, _col):
+        renaming = getattr(self, "_renaming", None)
+        if not renaming or renaming[0] is not item:
+            return
+        self._renaming = None
+        old, new = renaming[1], item.text(0).strip().replace("=", "-")
+        if new and new != old and new not in self.config.folders:
+            self.apply_now(lambda c: c.rename_folder(old, new))
+            self._set_collapsed(new, old in self._collapsed())
+        self._fill_sidebar()  # shows the new name, or puts the old one back
+
+    def _rename_closed(self):
+        """Esc closes the editor without a change: put the folder's normal label back."""
+        if getattr(self, "_renaming", None):
+            self._renaming = None
+            self._fill_sidebar()
 
     def delete_folder(self, folder: str):
         n = len(self.config.folders.get(folder, []))
