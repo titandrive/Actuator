@@ -6,11 +6,12 @@ from PySide6.QtCore import Qt, Signal
 from PySide6.QtGui import QIcon
 from PySide6.QtWidgets import (
     QCheckBox, QComboBox, QDialog, QDialogButtonBox, QFormLayout, QGroupBox, QHBoxLayout, QLabel, QLineEdit,
-    QMessageBox, QPlainTextEdit, QPushButton, QSpinBox, QStackedWidget, QTreeWidget,
+    QMessageBox, QPlainTextEdit, QPushButton, QSpinBox, QStackedWidget, QToolButton, QTreeWidget,
     QTreeWidgetItem, QVBoxLayout, QWidget,
 )
 from ruamel.yaml import YAML
 
+from . import conditions as conds
 from . import config as cfg
 from . import describe as d
 from . import keys
@@ -302,6 +303,168 @@ def load_yaml(text: str):
     return YAML(typ="safe").load(text)
 
 
+class ConditionBuilder(QWidget):
+    """Rows of [what] [how] [value] that edit a binding's conditions. The app condition,
+    when there is one, is shown locked: it comes from where the binding lives."""
+
+    changed = Signal()
+
+    def __init__(self):
+        super().__init__()
+        self.data = None
+        self.app = None
+        self.rows: list[tuple] = []
+        self.locked = QLabel()
+        self.mode = QComboBox()
+        for m, label in (("all", "all of these"), ("any", "any of these"), ("none", "none of these")):
+            self.mode.addItem(label, m)
+        self.mode.currentIndexChanged.connect(lambda _i: (self._write(), self._update_summary()))
+        self.mode_row = QWidget()
+        mr = QHBoxLayout(self.mode_row)
+        mr.setContentsMargins(0, 0, 0, 0)
+        self.mode_prefix = QLabel("and")
+        mr.addWidget(self.mode_prefix)
+        mr.addWidget(self.mode)
+        mr.addStretch(1)
+        self.rows_box = QVBoxLayout()
+        add = QPushButton(QIcon.fromTheme("list-add"), "Add condition")
+        add.clicked.connect(self._add)
+        self.summary = QLabel()
+        self.summary.setWordWrap(True)
+        self.summary.setStyleSheet("color: palette(placeholder-text);")
+        self.too_complex = QLabel("These conditions are too complex for the editor (for example, more than "
+                                  "one app or nested groups). Edit them with the YAML button above.")
+        self.too_complex.setWordWrap(True)
+        self.form = QWidget()
+        fl = QVBoxLayout(self.form)
+        fl.setContentsMargins(0, 0, 0, 0)
+        fl.addWidget(self.locked)
+        fl.addWidget(self.mode_row)
+        fl.addLayout(self.rows_box)
+        fl.addWidget(add, 0, Qt.AlignmentFlag.AlignLeft)
+        fl.addWidget(self.summary)
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(0, 0, 0, 0)
+        layout.addWidget(self.form)
+        layout.addWidget(self.too_complex)
+
+    def load(self, data: dict, where: str):
+        self.data, self.where = data, where
+        parts = conds.split(data.get("conditions"))
+        self.form.setVisible(parts is not None)
+        self.too_complex.setVisible(parts is None)
+        if parts is None:
+            return
+        self.app, mode, self.rows = parts[0], parts[1], list(parts[2])
+        self.locked.setVisible(bool(self.app))
+        if self.app:
+            self.locked.setText(f"🔒 {d.condition(self.app)}  <span style='color:palette(placeholder-text)'>"
+                                "(from the sidebar)</span>")
+        self.mode_prefix.setText("and" if self.app else "When")
+        self.mode.blockSignals(True)
+        self.mode.setCurrentIndex(max(self.mode.findData(mode), 0))
+        self.mode.blockSignals(False)
+        self._build_rows()
+
+    def _build_rows(self):
+        while self.rows_box.count():
+            w = self.rows_box.takeAt(0).widget()
+            if w:
+                w.deleteLater()
+        for i, row in enumerate(self.rows):
+            self.rows_box.addWidget(self._row_widget(i, row))
+        self.mode_row.setVisible(len(self.rows) > 1 or (len(self.rows) == 1 and not self.app))
+        if not self.app and len(self.rows) <= 1:
+            self.mode_prefix.setText("When")
+        self._update_summary()
+
+    def _row_widget(self, i: int, row) -> QWidget:
+        kind, op, value = row
+        w = QWidget()
+        h = QHBoxLayout(w)
+        h.setContentsMargins(0, 0, 0, 0)
+        kind_box = QComboBox()
+        kind_box.addItems(list(conds.ROW_TYPES))
+        kind_box.setCurrentText(kind)
+        ops, value_kind = conds.ROW_TYPES[kind]
+        h.addWidget(kind_box)
+        op_box = None
+        if kind != "Custom":
+            op_box = QComboBox()
+            op_box.addItems(ops)
+            op_box.setCurrentText(op)
+            h.addWidget(op_box)
+        value_widget = None
+        if value_kind == "text":
+            value_widget = QLineEdit(value)
+            value_widget.setPlaceholderText({"Window title": "YouTube", "Screen": "eDP-1",
+                                             "Custom": "$window_pid > 1000"}.get(kind, ""))
+            value_widget.textEdited.connect(lambda t, i=i: self._set(i, value=t))
+            h.addWidget(value_widget, 1)
+        elif isinstance(value_kind, list) and op != "are none":
+            value_widget = QComboBox()
+            value_widget.addItems(value_kind)
+            value_widget.setCurrentText(value or value_kind[0])
+            value_widget.currentTextChanged.connect(lambda t, i=i: self._set(i, value=t))
+            h.addWidget(value_widget)
+        if value_widget is None or isinstance(value_widget, QComboBox):
+            h.addStretch(1)
+        remove = QToolButton(icon=QIcon.fromTheme("edit-delete-remove", QIcon.fromTheme("list-remove")))
+        remove.setAutoRaise(True)
+        remove.setToolTip("Remove condition")
+        remove.clicked.connect(lambda _=False, i=i: self._remove(i))
+        h.addWidget(remove)
+        kind_box.currentTextChanged.connect(lambda k, i=i: self._set_kind(i, k))
+        if op_box:
+            op_box.currentTextChanged.connect(lambda o, i=i: self._set(i, op=o, rebuild=True))
+        return w
+
+    def _set_kind(self, i: int, kind: str):
+        ops, value_kind = conds.ROW_TYPES[kind]
+        self.rows[i] = (kind, ops[0], value_kind[0] if isinstance(value_kind, list) else "")
+        self._write()
+        self._build_rows()
+
+    def _set(self, i: int, op=None, value=None, rebuild=False):
+        kind, o, v = self.rows[i]
+        self.rows[i] = (kind, op if op is not None else o, value if value is not None else v)
+        self._write()
+        if rebuild:
+            self._build_rows()
+        else:
+            self._update_summary()
+
+    def _add(self):
+        self.rows.append(("Window", "is fullscreen", ""))
+        self._write()
+        self._build_rows()
+
+    def _remove(self, i: int):
+        del self.rows[i]
+        self._write()
+        self._build_rows()
+
+    def _write(self, *_):
+        if self.data is None:
+            return
+        value = conds.join(self.app, self.mode.currentData(), self.rows)
+        if value is None:
+            self.data.pop("conditions", None)
+        else:
+            self.data["conditions"] = value
+        self.changed.emit()
+
+    def _update_summary(self):
+        parts = [conds.describe_row(r) for r in self.rows if conds.to_text(r)]
+        if not parts:
+            self.summary.setText(f"Fires {self.where}." if self.where else "Fires everywhere.")
+            return
+        mode = self.mode.currentData()
+        joined = (" and " if mode == "all" else ", ").join(parts)
+        lead = {"all": "when", "any": "when any of:", "none": "unless"}[mode]
+        self.summary.setText(f"Fires {self.where or 'everywhere'} {lead} {joined}.")
+
+
 class BindingEditor(QWidget):
     """Edits one binding's data in place. Emits changed() after every applied edit,
     structure_changed() when the binding moved scope or was deleted."""
@@ -351,13 +514,9 @@ class BindingEditor(QWidget):
 
         # Only if
         self.cond_box = QGroupBox("Only if")
-        self.cond_label = QLabel()
-        self.cond_label.setWordWrap(True)
-        cond_hint = QLabel("Use YAML for more conditions; the binding moves to Custom rules.")
-        cond_hint.setStyleSheet("color: palette(placeholder-text);")
-        cond_layout = QVBoxLayout(self.cond_box)
-        cond_layout.addWidget(self.cond_label)
-        cond_layout.addWidget(cond_hint)
+        self.conditions = ConditionBuilder()
+        self.conditions.changed.connect(self._conditions_edited)
+        QVBoxLayout(self.cond_box).addWidget(self.conditions)
 
         # Do
         self.do_box = QGroupBox("Do")
@@ -482,8 +641,8 @@ class BindingEditor(QWidget):
         self.instant.setChecked(bool(g.get("instant", False)))
         self.block.setChecked(bool(g.get("block_events", True)))
 
-        conds = d.conditions(g.get("conditions"))
-        self.cond_label.setText("<br>".join(conds) if conds else "Always (every app)")
+        where = f"in {b.app.capitalize()}" if b.scope == "app" else ("everywhere" if b.scope == "global" else "")
+        self.conditions.load(g, where)
 
         mode, values = detect_mode(g.get("actions"))
         self._fill_do(mode, values)
@@ -527,6 +686,11 @@ class BindingEditor(QWidget):
         self._shown_gesture = new
         self.yaml.setPlainText(d.to_yaml(self.binding.data))
         self.changed.emit()
+
+    def _conditions_edited(self):
+        if self._loading or not self.binding:
+            return
+        self._commit()
 
     def _trigger_edited(self, *_):
         if self._loading or not self.binding:

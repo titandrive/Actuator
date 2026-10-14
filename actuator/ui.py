@@ -7,7 +7,7 @@ from datetime import date, datetime
 from pathlib import Path
 
 from PySide6.QtCore import QFileSystemWatcher, QSettings, Qt, QTimer, Signal
-from PySide6.QtGui import QAction, QIcon
+from PySide6.QtGui import QAction, QIcon, QKeySequence, QShortcut
 from PySide6.QtWidgets import (
     QApplication, QDialog, QFormLayout, QSpinBox, QDialogButtonBox, QFileDialog, QFrame, QGridLayout, QHBoxLayout,
     QCheckBox, QComboBox, QGroupBox, QInputDialog, QLabel, QLineEdit, QMainWindow, QMenu,
@@ -18,10 +18,11 @@ from PySide6.QtWidgets import (
 from ruamel.yaml import YAML
 
 from . import config as cfg
+from . import copying
 from . import describe as d
 from . import keys
 from . import writer
-from .devices import DeviceSettingsPage
+from . import devices as devices_mod
 from .editor import GESTURE_TYPES, BindingEditor, new_button_binding, new_gesture_binding
 
 ROLE = Qt.ItemDataRole.UserRole
@@ -94,7 +95,7 @@ def scope_title(scope: str, app: str | None) -> str:
 
 
 def app_counts(c: cfg.Config) -> dict[str, int]:
-    counts = {"Global": len(c.bindings_for("global")), "Custom rules": len(c.bindings_for("custom"))}
+    counts = {"Global": len(c.bindings_for("global")) + len(c.bindings_for("custom"))}
     for app in c.apps:
         counts[app.capitalize()] = len(c.bindings_for("app", app))
     return counts
@@ -210,7 +211,7 @@ class SidebarTree(QTreeWidget):
 
 
 class OptionsDialog(QDialog):
-    def __init__(self, parent, tabs: dict[str, bool], autostart: bool, keep: int, show_devices: bool):
+    def __init__(self, parent, tabs: dict[str, bool], autostart: bool, keep: int):
         super().__init__(parent)
         self.setWindowTitle("Options")
         self.autostart = QCheckBox("Start InputActions when I log in")
@@ -241,14 +242,14 @@ class OptionsDialog(QDialog):
         buttons = QDialogButtonBox(QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel)
         buttons.accepted.connect(self.accept)
         buttons.rejected.connect(self.reject)
-        self.show_devices = QCheckBox("Show Device settings")
-        self.show_devices.setChecked(show_devices)
-        dev_note = QLabel("Tuning for swipe angles, thresholds and timeouts. Most people never need it.")
+        devices = QPushButton(QIcon.fromTheme("input-mouse"), "Device settings…")
+        devices.clicked.connect(parent.open_device_settings)
+        dev_note = QLabel("Swipe angles, thresholds and timeouts. Most people never need these.")
         dev_note.setWordWrap(True)
         dev_note.setStyleSheet("color: palette(placeholder-text);")
         adv = QGroupBox("Advanced")
         al = QVBoxLayout(adv)
-        al.addWidget(self.show_devices)
+        al.addWidget(devices, 0, Qt.AlignmentFlag.AlignLeft)
         al.addWidget(dev_note)
         layout = QVBoxLayout(self)
         layout.addWidget(ia)
@@ -403,8 +404,11 @@ class BindingsPage(QWidget):
                 yield item
 
     def finish(self, empty_text: str, select=None):
-        for i in range(self.tree.columnCount()):
-            self.tree.resizeColumnToContents(i)
+        header = self.tree.header()
+        # Every column but the last keeps fitting its text as rows change; the last fills the rest.
+        for i in range(self.tree.columnCount() - 1):
+            header.setSectionResizeMode(i, header.ResizeMode.ResizeToContents)
+        header.setStretchLastSection(True)
         rows = list(self.rows())
         target = next((r for r in rows if select and select(r.data(0, ROLE))), rows[0] if rows else None)
         if target:
@@ -435,9 +439,11 @@ class MainWindow(QMainWindow):
             set_starts_at_login(True)  # Actuator's default: start with Plasma
         self.loaded = effect_loaded()  # real state, from KWin
         self.suspended = False  # InputActions can't report this; assume not suspended
-        self.current = ("global", None)
+        last = self.settings.value("last/page", "global|", type=str).split("|", 1)
+        self.current = (last[0], last[1] or None) if last[0] in ("global", "app") else ("global", None)
         self._issues = ""
         self._last_written: str | None = None
+        self._clipboard: list[tuple[str, dict]] = []
 
         self._build_toolbar()
         self.sidebar = SidebarTree()
@@ -516,7 +522,7 @@ class MainWindow(QMainWindow):
     def show_options(self):
         autostart = starts_at_login()
         dialog = OptionsDialog(self, {t: self.tab_visible(t) for t in cfg.DEVICES}, autostart,
-                               writer.SNAPSHOT_KEEP, self.show_device_settings())
+                               writer.SNAPSHOT_KEEP)
         if dialog.exec() != QDialog.DialogCode.Accepted:
             return
         if dialog.keep.value() != writer.SNAPSHOT_KEEP:
@@ -538,10 +544,14 @@ class MainWindow(QMainWindow):
                 QMessageBox.warning(self, "Actuator", f"Couldn't change the InputActions setting.\n\n{out}")
         for title, on in dialog.tabs().items():
             self.settings.setValue(f"tabs/{title}", on)
-        self.settings.setValue("show_device_settings", dialog.show_devices.isChecked())
-        if self.current == ("devices", None) and not self.show_device_settings():
-            self.current = ("global", None)
         self._fill_sidebar()
+
+    def open_device_settings(self):
+        if not devices_mod.confirm_open(self, self.settings):
+            return
+        dialog = devices_mod.DeviceSettingsDialog(self, self.config)
+        if dialog.exec() == QDialog.DialogCode.Accepted and dialog.dirty:
+            self.apply_now(dialog.apply_to, take_snapshot=True)
 
     def _fill_recent(self):
         self.recent.clear()
@@ -556,9 +566,6 @@ class MainWindow(QMainWindow):
             self.recent.addAction("Original (before Actuator)", lambda: self.restore(orig))
         if self.recent.isEmpty():
             self.recent.addAction("No saved versions yet").setEnabled(False)
-
-    def show_device_settings(self) -> bool:
-        return self.settings.value("show_device_settings", False, type=bool)
 
     def tab_visible(self, title: str) -> bool:
         return self.settings.value(f"tabs/{title}", True, type=bool)
@@ -822,10 +829,6 @@ class MainWindow(QMainWindow):
         for app in apps:
             if not self.config.folder_of(app):
                 items[("app", app)] = entry(app.capitalize(), app, ("app", app))
-        header("Advanced")
-        items[("custom", None)] = entry("Custom rules", "view-filter", ("custom", None))
-        if self.show_device_settings():
-            items[("devices", None)] = entry("Device settings", "configure", ("devices", None))
         self.sidebar.blockSignals(False)
         self.sidebar.setCurrentItem(items.get(keep, items[("global", None)]))
 
@@ -872,9 +875,12 @@ class MainWindow(QMainWindow):
             move.addAction(QIcon.fromTheme("folder-new"), "New folder…", lambda: self.new_folder(app))
             if current:
                 menu.addAction(f"Take out of {current}", lambda: self.move_app(app, None))
+            self._add_copy_all(menu, ("app", app))
             menu.addSeparator()
             menu.addAction(QIcon.fromTheme("list-remove"), f"Remove {app.capitalize()}…",
                            lambda: self.remove_app(app))
+        elif payload == ("global", None):
+            self._add_copy_all(menu, ("global", None))
         elif isinstance(payload, tuple) and payload[0] == "folder":
             folder = payload[1]
             menu.addAction(QIcon.fromTheme("edit-rename"), "Rename…", lambda: self.rename_folder(folder))
@@ -883,6 +889,15 @@ class MainWindow(QMainWindow):
             menu.addAction(QIcon.fromTheme("list-add"), "Add app…", self.add_app)
             menu.addAction(QIcon.fromTheme("folder-new"), "New folder…", lambda: self.new_folder())
         menu.exec(self.sidebar.viewport().mapToGlobal(pos))
+
+    def _add_copy_all(self, menu: QMenu, source):
+        items = [(b.section, d.plain(b.data)) for b in self.config.bindings_for(*source)]
+        to = menu.addMenu(QIcon.fromTheme("edit-copy"), "Copy all bindings to")
+        to.setEnabled(bool(items))
+        for scope, app, label in self._targets(source):
+            to.addAction(label, lambda s=scope, a=app: self._copy_into(items, s, a))
+        to.addSeparator()
+        to.addAction(QIcon.fromTheme("list-add"), "New app…", lambda: self._copy_to_new_app(items))
 
     def _ask_folder_name(self, title: str, text: str = "") -> str | None:
         name, ok = QInputDialog.getText(self, title, "Folder name:", text=text)
@@ -968,22 +983,18 @@ class MainWindow(QMainWindow):
         self.pages.addWidget(widget)
 
     def _show_scope(self, scope: str, app: str | None, select=None):
-        old = self.pages.currentWidget()
-        tab = old.currentIndex() if isinstance(old, QTabWidget) and self.current == (scope, app) else 0
         self.current = (scope, app)
-        if scope == "devices":
-            self._set_page(self._device_settings_page())
-            return
-        if scope == "custom":
-            self._set_page(self._custom_page(select))
-            return
+        self.settings.setValue("last/page", f"{scope}|{app or ''}")
         tabs = QTabWidget()
         for title, section in cfg.DEVICES.items():
             if self.tab_visible(title):
                 page = self._mouse_page(scope, app, select) if section == "mouse" else \
                     self._gesture_page(scope, app, section, select)
                 tabs.addTab(page, title)
-        tabs.setCurrentIndex(min(tab, tabs.count() - 1))
+        # Stay on the same device tab when switching apps, and across restarts.
+        last_tab = self.settings.value("last/tab", "Mouse", type=str)
+        tabs.setCurrentIndex(next((i for i in range(tabs.count()) if tabs.tabText(i) == last_tab), 0))
+        tabs.currentChanged.connect(lambda i: self.settings.setValue("last/tab", tabs.tabText(i)))
         self._set_page(tabs)
 
     def _refresh(self, select=None):
@@ -1004,40 +1015,142 @@ class MainWindow(QMainWindow):
                     item.setText(col, text)
         page.editor.changed.connect(changed)
         page.editor.structure_changed.connect(lambda: self._refresh())
+        page.tree.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
+        page.tree.customContextMenuRequested.connect(lambda pos: self._binding_menu(page, pos))
+        QShortcut(QKeySequence.StandardKey.Copy, page.tree, lambda: self._copy_binding(page.tree.currentItem()))
+        QShortcut(QKeySequence.StandardKey.Paste, page.tree, self._paste_here)
+
+    # Copy and paste ---------------------------------------------------------
+
+    def _targets(self, exclude) -> list[tuple[str, str | None, str]]:
+        out = [("global", None, "Global")] + [("app", a, a.capitalize()) for a in self.config.apps]
+        return [t for t in out if (t[0], t[1]) != exclude]
+
+    def _binding_menu(self, page: BindingsPage, pos):
+        item = page.tree.itemAt(pos)
+        if item and item.flags() & Qt.ItemFlag.ItemIsSelectable:
+            page.tree.setCurrentItem(item)
+        p = item.data(0, ROLE) if item else None
+        binding = p.get("binding") if isinstance(p, dict) else None
+        menu = QMenu(self)
+        if binding:
+            menu.addAction(QIcon.fromTheme("edit-copy"), "Copy", lambda: self._copy_binding(item))
+            to = menu.addMenu(QIcon.fromTheme("go-next"), "Copy to")
+            for scope, app, label in self._targets(self.current):
+                to.addAction(label, lambda s=scope, a=app: self._copy_into([(binding.section, binding.data)], s, a))
+            to.addSeparator()
+            to.addAction(QIcon.fromTheme("list-add"), "New app…",
+                         lambda: self._copy_to_new_app([(binding.section, binding.data)]))
+        elif isinstance(p, dict) and p.get("bind"):
+            menu.addAction(QIcon.fromTheme("list-add"), "Bind an action", p["bind"])
+        if self._clipboard:
+            menu.addAction(QIcon.fromTheme("edit-paste"), "Paste", self._paste_here)
+        if menu.isEmpty():
+            menu.addAction("Nothing to copy here").setEnabled(False)
+        if binding:
+            menu.addSeparator()
+            menu.addAction(QIcon.fromTheme("edit-delete"), "Delete", page.editor._delete)
+        menu.exec(page.tree.viewport().mapToGlobal(pos))
+
+    def _copy_binding(self, item):
+        p = item.data(0, ROLE) if item else None
+        b = p.get("binding") if isinstance(p, dict) else None
+        if b:
+            self._clipboard = [(b.section, d.plain(b.data))]
+            self.statusBar().showMessage("Binding copied. Paste it into another app with Ctrl+V.", 4000)
+
+    def _paste_here(self):
+        if self._clipboard:
+            self._copy_into(self._clipboard, *self.current)
+
+    def _copy_to_new_app(self, items):
+        dialog = AddAppDialog(self, list(self.config.folders))
+        if dialog.exec() != QDialog.DialogCode.Accepted:
+            return
+        app, folder = cfg.app_key(dialog.value()), dialog.folder()
+
+        def change(c):
+            if app not in c.apps:
+                c.add_app(app)
+            if folder:
+                c.move_to_folder(app, folder)
+        if self.apply_now(change):
+            self._copy_into(items, "app", app)
+
+    def _copy_into(self, items, scope: str, app: str | None):
+        where = app.capitalize() if app else "Global"
+        clash = copying.clashes(self.config, items, scope, app)
+        replace = False
+        if clash:
+            box = QMessageBox(QMessageBox.Icon.Question, "Already set up",
+                              f"{where} already has {len(clash)} binding{'s' if len(clash) != 1 else ''} "
+                              "for the same button or gesture:\n\n"
+                              + "\n".join(f"• {d.gesture_title(b.data)} → {d.summary(b)}" for b in clash[:8]),
+                              parent=self)
+            rep = box.addButton("Replace them", QMessageBox.ButtonRole.AcceptRole)
+            skip = box.addButton("Skip those", QMessageBox.ButtonRole.ActionRole)
+            box.addButton(QMessageBox.StandardButton.Cancel)
+            box.exec()
+            if box.clickedButton() not in (rep, skip):
+                return
+            replace = box.clickedButton() is rep
+        added, skipped = copying.paste(self.config, items, scope, app, replace)
+        if added:
+            self.mark_dirty()
+        msg = f"Copied {added} binding{'s' if added != 1 else ''} to {where}"
+        msg += f", skipped {skipped}." if skipped else "."
+        self.statusBar().showMessage(msg + (" Save to keep it." if added else ""), 6000)
+        self.current = (scope, app)
+        self._fill_sidebar()
+
+    def _bindings(self, scope, app, section=None):
+        """Bindings for a page. Global also shows the ones whose conditions are too complex
+        for the editor, so nothing is hidden; their conditions are edited as YAML."""
+        found = self.config.bindings_for(scope, app, section)
+        if scope == "global":
+            found += self.config.bindings_for("custom", None, section)
+        return found
 
     def _mouse_page(self, scope, app, select=None) -> QWidget:
         where = scope_title(scope, app)
-        page = BindingsPage(["Button (double-click to rename)", "Input", f"In {where}"], self.config)
-        page.tree.headerItem().setToolTip(0, "Double-click a name to rename it")
-        bindings = self.config.bindings_for(scope, app)
-        page.add_group("Buttons")
-        for btn in self.config.buttons:
-            b = next((x for x in bindings if x.button == btn.src), None)
-            name = button_name(btn)
-            item = page.add_row(
-                [name, d.button_label(btn.src), d.summary(b) if b else "Default"],
-                {"title": f"{name} in {where}", "binding": b, "src": btn.src,
-                 "message": f"{name} does its normal thing in {where}.",
-                 "bind": lambda _=False, btn=btn: self._bind_button(btn, scope, app)},
-            )
-            item.setFlags(item.flags() | Qt.ItemFlag.ItemIsEditable)
+        page = BindingsPage(["Input", "Action"], self.config)
+        page.tree.headerItem().setToolTip(0, "Double-click a name to rename it. Renaming only changes "
+                                             "the name shown here.")
+        page.tree.headerItem().setToolTip(1, f"What it does in {where}")
+        bindings = self._bindings(scope, app)
+        bound = [(btn, b) for btn in self.config.buttons
+                 if (b := next((x for x in bindings if x.button == btn.src), None))]
         gestures = [b for b in bindings if b.section == "mouse" and not b.button]
+        both = bool(bound and gestures)  # headings only help when there are two kinds to tell apart
+        if both:
+            page.add_group("Buttons")
+        for btn, b in bound:  # only buttons that do something here
+            name = button_name(btn)
+            item = page.add_row([name, d.summary(b)], {"title": f"{name} in {where}", "binding": b, "src": btn.src})
+            item.setToolTip(0, f"Sends {d.button_label(btn.src)}. Double-click to rename.")
+            item.setFlags(item.flags() | Qt.ItemFlag.ItemIsEditable)
         if gestures:
-            page.add_group("Gestures")
+            if both:
+                page.add_group("Gestures")
             for b in gestures:
                 title = d.gesture_title(b.data)
-                page.add_row([title, "", d.summary(b)], {"title": f"{title} in {where}", "binding": b})
-        add = QPushButton(QIcon.fromTheme("list-add"), "Add button…")
-        add.clicked.connect(self.add_button)
-        page.add_button(add)
+                page.add_row([title, d.summary(b)], {"title": f"{title} in {where}", "binding": b})
+        menu = QMenu(self)
+        unbound = [btn for btn in self.config.buttons if btn.src not in {x.src for x, _b in bound}]
+        for btn in unbound:
+            menu.addAction(f"{button_name(btn)}  ({d.button_label(btn.src)})" if button_name(btn) != d.button_label(btn.src)
+                           else button_name(btn), lambda btn=btn: self._bind_button(btn, scope, app))
+        if unbound:
+            menu.addSeparator()
+        menu.addAction(QIcon.fromTheme("input-mouse"), "Press a new button…", lambda: self.add_button(scope, app))
+        page.add_button(self._menu_button("Add button binding", "list-add", menu))
         page.add_button(self._gesture_menu_button("mouse", scope, app))
-        page.finish("No mouse buttons yet. Add one by pressing it.", select)
+        page.finish(f"No mouse bindings for {where} yet. Use Add button binding.", select)
         page.tree.setEditTriggers(QTreeWidget.EditTrigger.NoEditTriggers)
         page.tree.itemDoubleClicked.connect(
             lambda item, col: page.tree.editItem(item, 0) if item.flags() & Qt.ItemFlag.ItemIsEditable else None)
         page.tree.itemChanged.connect(lambda item, col: self._renamed(page, item) if col == 0 else None)
-        self._wire(page, lambda p: [page.tree.currentItem().text(0), page.tree.currentItem().text(1),
-                                    d.summary(p["binding"]) if p.get("binding") else "Default"])
+        self._wire(page, lambda p: [page.tree.currentItem().text(0), d.summary(p["binding"])])
         return page
 
     def _gesture_menu_button(self, section, scope, app) -> QToolButton:
@@ -1059,7 +1172,8 @@ class MainWindow(QMainWindow):
         self.config.add_binding(section, data)
         self._refresh(lambda p: p.get("binding") is not None and p["binding"].data is data)
 
-    def add_button(self):
+    def add_button(self, scope, app):
+        """Learn a new button by pressing it, then bind it here."""
         dialog = CaptureDialog(self)
         if dialog.exec() != QDialog.DialogCode.Accepted:
             return
@@ -1067,7 +1181,11 @@ class MainWindow(QMainWindow):
         if not any(b.src == src for b in self.config.buttons):
             if not self.apply_now(lambda c: c.add_button(src, d.button_label(src))):
                 return
-        self._show_scope(*self.current, select=lambda p: p.get("src") == src)
+        btn = next(b for b in self.config.buttons if b.src == src)
+        if any(x.button == src for x in self._bindings(scope, app)):
+            self._show_scope(scope, app, select=lambda p: p.get("src") == src)  # already bound: just show it
+        else:
+            self._bind_button(btn, scope, app)
 
     def _renamed(self, page: BindingsPage, item: QTreeWidgetItem):
         p = item.data(0, ROLE)
@@ -1083,8 +1201,8 @@ class MainWindow(QMainWindow):
 
     def _gesture_page(self, scope, app, section, select=None) -> QWidget:
         where = scope_title(scope, app)
-        page = BindingsPage(["Gesture", "Does"], self.config)
-        for b in self.config.bindings_for(scope, app, section):
+        page = BindingsPage(["Gesture", "Action"], self.config)
+        for b in self._bindings(scope, app, section):
             if b.button:  # mouse-emitted shortcuts live on the Mouse tab
                 continue
             title = d.gesture_title(b.data)
@@ -1092,19 +1210,4 @@ class MainWindow(QMainWindow):
         page.add_button(self._gesture_menu_button(section, scope, app))
         page.finish(f"No {section} bindings for {where} yet.", select)
         self._wire(page, lambda p: [d.gesture_title(p["binding"].data), d.summary(p["binding"])])
-        return page
-
-    def _custom_page(self, select=None) -> QWidget:
-        page = BindingsPage(["Rule", "Device", "Does"], self.config)
-        for b in self.config.bindings_for("custom"):
-            title = d.gesture_title(b.data)
-            page.add_row([b.id, b.section.capitalize(), d.summary(b)], {"title": f"{b.id} — {title}", "binding": b})
-        page.finish("No custom rules. These are bindings with conditions other than a single app. "
-                    "Add more conditions to any binding in its YAML to make one.", select)
-        self._wire(page, lambda p: [p["binding"].id, p["binding"].section.capitalize(), d.summary(p["binding"])])
-        return page
-
-    def _device_settings_page(self) -> QWidget:
-        page = DeviceSettingsPage(self.config)
-        page.changed.connect(self.mark_dirty)
         return page

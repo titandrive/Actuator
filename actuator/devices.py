@@ -530,3 +530,44 @@ class DeviceSettingsPage(QWidget):
         layout.addWidget(error)
         layout.addWidget(apply, 0, Qt.AlignmentFlag.AlignRight)
         return form
+
+
+class DeviceSettingsDialog(QDialog):
+    """Device settings in their own window. Edits a copy; Save hands back the new rules."""
+
+    def __init__(self, parent, config: cfg.Config):
+        super().__init__(parent)
+        self.setWindowTitle("Device settings")
+        self.copy = cfg.Config(path=config.path, data={"device_rules": d.plain(rules(config))},
+                               device_types=dict(config.device_types))
+        self.dirty = False
+        page = DeviceSettingsPage(self.copy)
+        page.changed.connect(lambda: setattr(self, "dirty", True))
+        buttons = QDialogButtonBox(QDialogButtonBox.StandardButton.Save | QDialogButtonBox.StandardButton.Cancel)
+        buttons.accepted.connect(self.accept)
+        buttons.rejected.connect(self.reject)
+        layout = QVBoxLayout(self)
+        layout.addWidget(page, 1)
+        layout.addWidget(buttons)
+        self.resize(900, 600)
+
+    def apply_to(self, config: cfg.Config):
+        config.data["device_rules"] = d.plain(rules(self.copy))
+        config.device_types = dict(self.copy.device_types)
+
+
+def confirm_open(parent, settings) -> bool:
+    if settings.value("skip_device_warning", False, type=bool):
+        return True
+    box = QMessageBox(QMessageBox.Icon.Warning, "Device settings",
+                      "These change how InputActions reads your mouse, touchpad and touchscreen: swipe "
+                      "angles, thresholds and timeouts.\n\nWrong values can make gestures hard to trigger "
+                      "or fire by accident. Saved changes can be undone from Backup → Recent versions.",
+                      QMessageBox.StandardButton.Open | QMessageBox.StandardButton.Cancel, parent)
+    skip = QCheckBox("Don't show this again")
+    box.setCheckBox(skip)
+    if box.exec() != QMessageBox.StandardButton.Open:
+        return False
+    if skip.isChecked():
+        settings.setValue("skip_device_warning", True)
+    return True

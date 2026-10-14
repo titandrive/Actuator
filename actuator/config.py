@@ -166,15 +166,17 @@ def app_key(value: str) -> str:
 
 
 def parse_scope(conditions) -> tuple[str, str | None]:
-    """Global if unconditional, app if exactly one window class check, else custom."""
-    if conditions is None:
-        return "global", None
-    items = conditions if isinstance(conditions, list) else [conditions]
-    if len(items) == 1 and isinstance(items[0], str):
-        m = WINDOW_CLASS.match(items[0].strip())
-        if m:
-            return "app", app_key(m.group(2))
-    return "custom", None
+    """App if there's exactly one window class check (plus any extras the form can show),
+    global if there's none, custom if the conditions are beyond the form."""
+    from .conditions import split  # local: conditions has no dependency on config
+
+    parts = split(conditions)
+    if parts is None:
+        return "custom", None
+    app, _mode, _rows = parts
+    if app:
+        return "app", app_key(WINDOW_CLASS.match(app.strip()).group(2))
+    return "global", None
 
 
 def shortcut_key(keys) -> str:

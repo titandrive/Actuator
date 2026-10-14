@@ -101,10 +101,19 @@ def stages(actions) -> list[tuple[str, list[str]]]:
 
 
 def summary(binding) -> str:
+    from .conditions import extra_count
+
+    text = "Nothing"
     for _stage, steps in stages(binding.data.get("actions")):
         if steps:
-            return steps[0] + (" …" if len(steps) > 1 else "")
-    return "Nothing"
+            text = steps[0] + (" …" if len(steps) > 1 else "")
+            break
+    n = extra_count(binding.data.get("conditions"))
+    if n > 0:
+        text += f"  (only if +{n})"
+    elif n < 0:
+        text += "  (conditions in YAML)"
+    return text
 
 
 def trigger_parts(g: dict) -> list[str]:
