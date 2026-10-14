@@ -11,7 +11,7 @@ from PySide6.QtCore import (
     Property, QFileSystemWatcher, QItemSelectionModel, QPoint, QPropertyAnimation, QRectF, QSettings, QSize, Qt, QTimer, QUrl, Signal,
 )
 from PySide6.QtGui import (
-    QColor, QDesktopServices, QFontDatabase, QIcon, QKeySequence, QPainter, QPixmap, QShortcut,
+    QColor, QDesktopServices, QFontDatabase, QIcon, QKeySequence, QPainter, QPen, QPixmap, QShortcut,
 )
 from PySide6.QtWidgets import (
     QAbstractButton, QApplication, QDialog, QTextBrowser, QListWidget, QListWidgetItem, QToolTip, QFormLayout, QSpinBox, QDialogButtonBox, QFileDialog, QFrame, QGridLayout, QHBoxLayout,
@@ -279,8 +279,9 @@ class SidebarTree(QTreeWidget):
         super().__init__()
         self.setDragEnabled(True)
         self.setAcceptDrops(True)
-        self.setDropIndicatorShown(True)
+        self.setDropIndicatorShown(False)  # we draw our own: a box around where the app will land
         self.setDragDropMode(QTreeWidget.DragDropMode.InternalMove)
+        self._drop_rect = None
 
     def mousePressEvent(self, event):
         self.last_button = event.button()  # itemClicked fires on release, when this is no longer known
@@ -296,16 +297,76 @@ class SidebarTree(QTreeWidget):
             item = item.parent()
         return None
 
+    def _folder_item(self, name):
+        for i in range(self.topLevelItemCount()):
+            item = self.topLevelItem(i)
+            if item.data(0, ROLE) == ("folder", name):
+                return item
+        return None
+
+    def _drop_highlight(self, pos):
+        """Where a drop at pos would put the app: the target folder with its apps, or the
+        "Apps" heading when it would come out of its folder. None if nothing would change."""
+        dragged = self.currentItem()
+        parent = dragged.parent() if dragged else None
+        current = parent.data(0, ROLE)[1] if parent is not None else None
+        target = self._target_folder(pos)
+        if target == current:
+            return None
+        if target is not None:
+            folder = self._folder_item(target)
+            rect = self.visualItemRect(folder)
+            if folder.isExpanded():
+                for j in range(folder.childCount()):
+                    rect = rect.united(self.visualItemRect(folder.child(j)))
+        else:
+            heading = next((self.topLevelItem(i) for i in range(self.topLevelItemCount())
+                            if self.topLevelItem(i).text(0) == "Apps"), None)
+            if heading is None:
+                return None
+            rect = self.visualItemRect(heading)
+        rect.setLeft(2)
+        rect.setRight(self.viewport().width() - 3)
+        return rect
+
     def dragMoveEvent(self, event):
         dragged = self.currentItem()
         p = dragged.data(0, ROLE) if dragged else None
         if isinstance(p, tuple) and p[0] == "app":
             event.setDropAction(Qt.DropAction.MoveAction)
             event.accept()
+            rect = self._drop_highlight(event.position().toPoint())
         else:
             event.ignore()
+            rect = None
+        if rect != self._drop_rect:
+            self._drop_rect = rect
+            self.viewport().update()
+
+    def dragLeaveEvent(self, event):
+        self._drop_rect = None
+        self.viewport().update()
+        super().dragLeaveEvent(event)
+
+    def paintEvent(self, event):
+        super().paintEvent(event)
+        if self._drop_rect is None:
+            return
+        painter = QPainter(self.viewport())
+        painter.setRenderHint(QPainter.RenderHint.Antialiasing)
+        color = self.palette().highlight().color()
+        fill = QColor(color)
+        fill.setAlpha(45)
+        painter.setBrush(fill)
+        pen = QPen(color)
+        pen.setWidthF(1.5)
+        painter.setPen(pen)
+        painter.drawRoundedRect(QRectF(self._drop_rect).adjusted(0.5, 0.5, -0.5, -0.5), 6, 6)
+        painter.end()
 
     def dropEvent(self, event):
+        self._drop_rect = None
+        self.viewport().update()
         # Don't let Qt move items itself; the sidebar is rebuilt from the config.
         dragged = self.currentItem()
         p = dragged.data(0, ROLE) if dragged else None
