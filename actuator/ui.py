@@ -210,7 +210,7 @@ class SidebarTree(QTreeWidget):
 
 
 class OptionsDialog(QDialog):
-    def __init__(self, parent, tabs: dict[str, bool], autostart: bool, keep: int):
+    def __init__(self, parent, tabs: dict[str, bool], autostart: bool, keep: int, show_devices: bool):
         super().__init__(parent)
         self.setWindowTitle("Options")
         self.autostart = QCheckBox("Start InputActions when I log in")
@@ -241,10 +241,20 @@ class OptionsDialog(QDialog):
         buttons = QDialogButtonBox(QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel)
         buttons.accepted.connect(self.accept)
         buttons.rejected.connect(self.reject)
+        self.show_devices = QCheckBox("Show Device settings")
+        self.show_devices.setChecked(show_devices)
+        dev_note = QLabel("Tuning for swipe angles, thresholds and timeouts. Most people never need it.")
+        dev_note.setWordWrap(True)
+        dev_note.setStyleSheet("color: palette(placeholder-text);")
+        adv = QGroupBox("Advanced")
+        al = QVBoxLayout(adv)
+        al.addWidget(self.show_devices)
+        al.addWidget(dev_note)
         layout = QVBoxLayout(self)
         layout.addWidget(ia)
         layout.addWidget(backups)
         layout.addWidget(group)
+        layout.addWidget(adv)
         layout.addStretch(1)
         layout.addWidget(buttons)
         self.resize(320, 0)
@@ -506,7 +516,7 @@ class MainWindow(QMainWindow):
     def show_options(self):
         autostart = starts_at_login()
         dialog = OptionsDialog(self, {t: self.tab_visible(t) for t in cfg.DEVICES}, autostart,
-                               writer.SNAPSHOT_KEEP)
+                               writer.SNAPSHOT_KEEP, self.show_device_settings())
         if dialog.exec() != QDialog.DialogCode.Accepted:
             return
         if dialog.keep.value() != writer.SNAPSHOT_KEEP:
@@ -528,7 +538,10 @@ class MainWindow(QMainWindow):
                 QMessageBox.warning(self, "Actuator", f"Couldn't change the InputActions setting.\n\n{out}")
         for title, on in dialog.tabs().items():
             self.settings.setValue(f"tabs/{title}", on)
-        self._show_scope(*self.current)
+        self.settings.setValue("show_device_settings", dialog.show_devices.isChecked())
+        if self.current == ("devices", None) and not self.show_device_settings():
+            self.current = ("global", None)
+        self._fill_sidebar()
 
     def _fill_recent(self):
         self.recent.clear()
@@ -543,6 +556,9 @@ class MainWindow(QMainWindow):
             self.recent.addAction("Original (before Actuator)", lambda: self.restore(orig))
         if self.recent.isEmpty():
             self.recent.addAction("No saved versions yet").setEnabled(False)
+
+    def show_device_settings(self) -> bool:
+        return self.settings.value("show_device_settings", False, type=bool)
 
     def tab_visible(self, title: str) -> bool:
         return self.settings.value(f"tabs/{title}", True, type=bool)
@@ -808,7 +824,8 @@ class MainWindow(QMainWindow):
                 items[("app", app)] = entry(app.capitalize(), app, ("app", app))
         header("Advanced")
         items[("custom", None)] = entry("Custom rules", "view-filter", ("custom", None))
-        items[("devices", None)] = entry("Device settings", "configure", ("devices", None))
+        if self.show_device_settings():
+            items[("devices", None)] = entry("Device settings", "configure", ("devices", None))
         self.sidebar.blockSignals(False)
         self.sidebar.setCurrentItem(items.get(keep, items[("global", None)]))
 

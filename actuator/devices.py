@@ -7,7 +7,7 @@ from dataclasses import dataclass
 from PySide6.QtCore import Qt, Signal
 from PySide6.QtGui import QIcon
 from PySide6.QtWidgets import (
-    QCheckBox, QDialog, QDialogButtonBox, QFrame, QHBoxLayout, QLabel, QLineEdit,
+    QCheckBox, QDialog, QDialogButtonBox, QFrame, QHBoxLayout, QLabel, QLineEdit, QMessageBox,
     QPlainTextEdit, QPushButton, QScrollArea, QSlider, QSplitter, QStackedWidget, QToolButton,
     QTreeWidget, QTreeWidgetItem, QVBoxLayout, QWidget,
 )
@@ -341,8 +341,11 @@ class DeviceSettingsPage(QWidget):
         left = QWidget()
         ll = QVBoxLayout(left)
         ll.setContentsMargins(0, 0, 0, 0)
+        reset_all = QPushButton(QIcon.fromTheme("edit-clear-all"), "Reset all to defaults")
+        reset_all.clicked.connect(self._reset_all)
         ll.addWidget(self.tree)
         ll.addWidget(add)
+        ll.addWidget(reset_all)
         self.form_host = QScrollArea(widgetResizable=True, frameShape=QFrame.Shape.NoFrame)
         split = QSplitter()
         split.addWidget(left)
@@ -465,6 +468,25 @@ class DeviceSettingsPage(QWidget):
         reset_value(self.config, target, s.key)
         self.changed.emit()
         self._fill(target)
+
+    def _reset_all(self):
+        n = len(rules(self.config))
+        if not n:
+            QMessageBox.information(self, "Actuator", "Everything is already at its defaults.")
+            return
+        answer = QMessageBox.question(
+            self, "Reset all device settings?",
+            f"This removes all {n} device rule{'s' if n != 1 else ''}, including device-specific ones, "
+            "so every device uses InputActions' defaults.\n\nIt takes effect when you save, and the "
+            "save can be undone from Backup → Recent versions.",
+            QMessageBox.StandardButton.Reset | QMessageBox.StandardButton.Cancel,
+        )
+        if answer != QMessageBox.StandardButton.Reset:
+            return
+        rules(self.config).clear()
+        self.config.device_types.clear()
+        self.changed.emit()
+        self._fill()
 
     def _add_device(self):
         taken = {target_of(r)[1] for r in rules(self.config) if (target_of(r) or ("",))[0] == "name"}
