@@ -2,7 +2,7 @@
 
 A desktop app for configuring [InputActions](https://wiki.inputactions.org/) on KDE Plasma — mouse
 buttons, touchpad and touchscreen gestures, and the per-app actions they trigger — without editing YAML
-by hand.
+by hand (unless you want to).
 
 ![Actuator's main window: apps in the sidebar, Firefox's mouse bindings, and the binding editor](docs/screenshots/main.png)
 
