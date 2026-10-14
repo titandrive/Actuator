@@ -1,0 +1,201 @@
+"""Rendering the config in Actuator's layout, and saving it safely."""
+
+import io
+import os
+import shutil
+import re
+from datetime import datetime
+from pathlib import Path
+
+from ruamel.yaml import YAML
+from ruamel.yaml.comments import CommentedSeq
+from ruamel.yaml.scalarstring import SingleQuotedScalarString
+
+from . import config as cfg
+from . import describe as d
+
+HEADER = "# InputActions configuration, managed by Actuator."
+SNAPSHOT_DIR = Path.home() / ".local" / "share" / "actuator" / "snapshots"
+SNAPSHOT_KEEP = 50
+
+# Order sections are written in. Unknown top-level keys are kept, after these.
+SECTION_ORDER = ["mouse", "keyboard", "touchpad", "touchscreen", "pointer"]
+
+# Only lists of plain tokens like keys and button names go inline.
+INLINE_TOKEN = re.compile(r"^[A-Za-z0-9_+\-]+$")
+
+
+def _styled(node):
+    """Plain data → nodes that dump readably: short scalar lists inline, 'on' quoted."""
+    if isinstance(node, dict):
+        return {
+            (SingleQuotedScalarString(k) if k in ("on", "off", "yes", "no") else k): _styled(v)
+            for k, v in node.items()
+        }
+    if isinstance(node, list):
+        if node and all(isinstance(v, (str, int)) and INLINE_TOKEN.match(str(v)) for v in node):
+            seq = CommentedSeq(node)
+            seq.fa.set_flow_style()
+            return seq
+        return [_styled(v) for v in node]
+    return node
+
+
+def _dump(node, indent: str = "") -> list[str]:
+    y = YAML()
+    y.indent(mapping=2, sequence=2, offset=0)
+    y.width = 4096
+    buf = io.StringIO()
+    y.dump(_styled(node), buf)
+    return [indent + line if line else line for line in buf.getvalue().rstrip("\n").split("\n")]
+
+
+def _scope_order(config: cfg.Config, b: cfg.Binding) -> tuple:
+    rank = {"global": 0, "app": 1, "custom": 2}[b.scope]
+    return rank, b.app or ""
+
+
+def _scope_header(b: cfg.Binding) -> str:
+    if b.scope == "app":
+        return b.app.capitalize()
+    return "Global" if b.scope == "global" else "Custom rules"
+
+
+def render(config: cfg.Config) -> str:
+    out = [HEADER, "# Actuator rewrites this file in this layout every time it saves.", ""]
+
+    # Every known button is recorded, so detection never depends on guessing again.
+    names = {b.src: b.name if b.name != b.src else d.button_label(b.src) for b in config.buttons}
+    if names or config.extra_apps:
+        out.append("# Button names and apps used by Actuator. Safe to edit.")
+        out += [f"# actuator:button {src} = {name}" for src, name in sorted(names.items())]
+        out += [f"# actuator:app {app}" for app in sorted(config.extra_apps)]
+        out.append("")
+
+    data = d.plain(config.data)
+    sections = [s for s in SECTION_ORDER if s in data]
+    for section in sections:
+        body = data[section] or {}
+        title = section.upper()
+        if section == "keyboard":
+            title += " (includes mouse buttons that send shortcuts)"
+        out += [f"# {'=' * 76}", f"# {title}", f"# {'=' * 76}", f"{section}:"]
+        for key, value in body.items():
+            if key != "gestures":
+                out += _dump({key: value}, "  ")
+        bindings = sorted(
+            (b for b in config.bindings if b.section == section),
+            key=lambda b: (_scope_order(config, b), b.index),
+        )
+        out.append("  gestures:" if bindings else "  gestures: []")
+        last_header = None
+        for b in bindings:
+            header = _scope_header(b)
+            if header != last_header:
+                out += ["", f"  # {header}", f"  # {'-' * 74}"]
+                last_header = header
+            else:
+                out.append("")
+            if b.button:
+                out.append(f"  # {names.get(b.button) or d.button_label(b.button)}")
+            out += _dump([d.plain(b.data)], "  ")
+        out.append("")
+
+    rest = {k: v for k, v in data.items() if k not in sections}
+    if "device_rules" in rest:
+        out += [f"# {'=' * 76}", "# DEVICE SETTINGS", f"# {'=' * 76}"]
+        out += _dump({"device_rules": rest.pop("device_rules")})
+        out.append("")
+    for key, value in rest.items():
+        out += _dump({key: value})
+        out.append("")
+    return "\n".join(out).rstrip("\n") + "\n"
+
+
+def expected_data(config: cfg.Config) -> dict:
+    """What the rendered file must parse back to: same data, gestures in written order."""
+    data = d.plain(config.data)
+    for section in SECTION_ORDER:
+        if section in data:
+            ordered = sorted(
+                (b for b in config.bindings if b.section == section),
+                key=lambda b: (_scope_order(config, b), b.index),
+            )
+            body = data[section] or {}
+            body["gestures"] = [d.plain(b.data) for b in ordered]
+            data[section] = body
+    return data
+
+
+def verify(config: cfg.Config, text: str) -> None:
+    parsed = d.plain(YAML(typ="safe").load(text))
+    expected = d.plain(YAML(typ="safe").load(_roundtrip_plain(expected_data(config))))
+    if parsed != expected:
+        raise ValueError("Rendered config doesn't match the data it was made from. Nothing was written.")
+
+
+def _roundtrip_plain(data) -> str:
+    buf = io.StringIO()
+    YAML(typ="safe").dump(data, buf)
+    return buf.getvalue()
+
+
+def is_managed(path: Path) -> bool:
+    try:
+        return path.read_text().startswith(HEADER)
+    except OSError:
+        return False
+
+
+def original_path(path: Path) -> Path:
+    return path.with_name(path.name + ".original")
+
+
+def snapshot(path: Path) -> Path | None:
+    if not path.exists():
+        return None
+    SNAPSHOT_DIR.mkdir(parents=True, exist_ok=True)
+    target = SNAPSHOT_DIR / f"config-{datetime.now():%Y%m%d-%H%M%S}.yaml"
+    shutil.copy2(path, target)
+    for old in snapshots()[SNAPSHOT_KEEP:]:
+        old.unlink()
+    return target
+
+
+def snapshots() -> list[Path]:
+    """Newest first."""
+    if not SNAPSHOT_DIR.exists():
+        return []
+    return sorted(SNAPSHOT_DIR.glob("config-*.yaml"), reverse=True)
+
+
+def write_atomic(path: Path, text: str) -> None:
+    """Replace in one step, so InputActions never sees a missing or half-written file."""
+    tmp = path.with_name(f".{path.name}.actuator-tmp")
+    tmp.write_text(text)
+    if path.exists():
+        shutil.copymode(path, tmp)
+    os.replace(tmp, path)
+
+
+def save(config: cfg.Config) -> Path | None:
+    """Render, verify, keep the original on first save, snapshot, then write.
+
+    Returns the snapshot of the previous file, for undo.
+    """
+    text = render(config)
+    verify(config, text)
+    path = config.path
+    orig = original_path(path)
+    if path.exists() and not is_managed(path) and not orig.exists():
+        shutil.copy2(path, orig)
+    previous = snapshot(path)
+    write_atomic(path, text)
+    return previous
+
+
+def restore(path: Path, source: Path) -> Path | None:
+    """Put a backup or export in place. The current file is snapshotted first."""
+    previous = snapshot(path)
+    write_atomic(path, Path(source).read_text())
+    return previous
