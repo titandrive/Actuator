@@ -1,7 +1,9 @@
 """Editing config.yaml directly, with live YAML checking."""
 
-from PySide6.QtCore import QPointF, QTimer
-from PySide6.QtGui import QFontDatabase, QPainter, QTextCursor
+import subprocess
+
+from PySide6.QtCore import QFileSystemWatcher, QPointF, QTimer, QUrl
+from PySide6.QtGui import QDesktopServices, QFontDatabase, QIcon, QPainter, QTextCursor
 from PySide6.QtWidgets import (
     QDialog, QDialogButtonBox, QHBoxLayout, QLabel, QPlainTextEdit, QPushButton, QVBoxLayout,
 )
@@ -183,6 +185,17 @@ class YamlEditor(QDialog):
         row = QHBoxLayout()
         row.addWidget(self.status, 1)
         row.addWidget(self.go_to)
+        self.path = path
+        open_ext = QPushButton(QIcon.fromTheme("document-edit"), "Open in text editor")
+        open_ext.setToolTip("Open config.yaml in your default editor for YAML files")
+        open_ext.clicked.connect(lambda: QDesktopServices.openUrl(QUrl.fromLocalFile(str(path))))
+        reveal = QPushButton(QIcon.fromTheme("folder-open"), "Show in folder")
+        reveal.clicked.connect(self._reveal)
+        self.buttons.addButton(open_ext, QDialogButtonBox.ButtonRole.ActionRole)
+        self.buttons.addButton(reveal, QDialogButtonBox.ButtonRole.ActionRole)
+        # Edits made in another editor while this is open: reload them, or warn before overwriting.
+        self.watcher = QFileSystemWatcher([str(path)], self)
+        self.watcher.fileChanged.connect(lambda _p: QTimer.singleShot(200, self._disk_changed))
         layout = QVBoxLayout(self)
         layout.addWidget(self.edit, 1)
         layout.addLayout(row)
@@ -194,6 +207,37 @@ class YamlEditor(QDialog):
         self._timer.timeout.connect(self._validate)
         self.edit.textChanged.connect(self._timer.start)
         self._validate()
+
+    def _reveal(self):
+        """Open the file manager with the file selected (Dolphin and others support this)."""
+        ok = subprocess.run(
+            ["qdbus6", "org.freedesktop.FileManager1", "/org/freedesktop/FileManager1",
+             "org.freedesktop.FileManager1.ShowItems", QUrl.fromLocalFile(str(self.path)).toString(), ""],
+            capture_output=True, timeout=5).returncode == 0
+        if not ok:
+            QDesktopServices.openUrl(QUrl.fromLocalFile(str(self.path.parent)))
+
+    def _disk_changed(self):
+        if str(self.path) not in self.watcher.files() and self.path.exists():
+            self.watcher.addPath(str(self.path))  # editors that replace the file drop the watch
+        try:
+            disk = self.path.read_text()
+        except OSError:
+            return
+        if disk == self.original:
+            return
+        if self.text() == self.original:  # nothing edited here: take the new version
+            self.original = disk
+            self.edit.setPlainText(disk)
+            self._timer.stop()
+            self._validate()
+            self.status.setText("Reloaded: the file was changed in another editor.")
+        else:
+            self.original = disk
+            self._validate()
+            self.status.setText("⚠ The file was changed in another editor. Saving here will overwrite "
+                                "those changes.")
+            self.status.setStyleSheet("color: #d24545;")
 
     def text(self) -> str:
         return self.edit.toPlainText()
