@@ -179,7 +179,7 @@ class YamlEditor(QDialog):
         self.buttons.accepted.connect(self.accept)
         self.buttons.rejected.connect(self._cancel)
         note = QLabel("Saving writes the file, reloads InputActions, and keeps the previous version in "
-                      "Backup → Recent versions. Actuator reorganizes the file the next time it saves.")
+                      "☰ → Restore. Actuator reorganizes the file the next time it saves.")
         note.setWordWrap(True)
         note.setStyleSheet("color: palette(placeholder-text);")
         row = QHBoxLayout()

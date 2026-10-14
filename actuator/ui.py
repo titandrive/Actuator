@@ -9,7 +9,7 @@ from pathlib import Path
 
 from PySide6.QtCore import QFileSystemWatcher, QPoint, QSettings, QSize, Qt, QTimer, QUrl, Signal
 from PySide6.QtGui import (
-    QAction, QCursor, QDesktopServices, QFontDatabase, QIcon, QKeySequence, QShortcut,
+    QAction, QCursor, QDesktopServices, QFontDatabase, QIcon, QKeySequence, QPainter, QPixmap, QShortcut,
 )
 from PySide6.QtWidgets import (
     QApplication, QDialog, QTextBrowser, QListWidget, QListWidgetItem, QToolTip, QFormLayout, QSpinBox, QDialogButtonBox, QFileDialog, QFrame, QGridLayout, QHBoxLayout,
@@ -27,12 +27,29 @@ from . import copying
 from . import diffing
 from . import describe as d
 from . import keys
+from . import versions
 from . import writer
 from . import yaml_editor
 from . import devices as devices_mod
 from .editor import GESTURE_TYPES, BindingEditor, new_button_binding, new_gesture_binding
 
 ROLE = Qt.ItemDataRole.UserRole
+
+
+def _dimmable(icon: QIcon, size: int = 22) -> QIcon:
+    """The icon with a clearly faded version for its disabled state."""
+    out = QIcon()
+    normal = icon.pixmap(size, size)
+    faded = QPixmap(normal.size())
+    faded.setDevicePixelRatio(normal.devicePixelRatio())
+    faded.fill(Qt.GlobalColor.transparent)
+    painter = QPainter(faded)
+    painter.setOpacity(0.35)
+    painter.drawPixmap(0, 0, normal)
+    painter.end()
+    out.addPixmap(normal, QIcon.Mode.Normal)
+    out.addPixmap(faded, QIcon.Mode.Disabled)
+    return out
 
 
 def run_ctl(*args: str) -> tuple[bool, str]:
@@ -214,32 +231,13 @@ class RestorePreview(QDialog):
     def __init__(self, parent, groups: dict[str, list[tuple[str, str, str, str]]] | None):
         super().__init__(parent)
         self.setWindowTitle("Restore this version?")
-        colors = {"+": "#3a9a5b", "−": "#d24545", "~": "#c58a00"}
-        if groups is None:
-            body = "<p>Your current config can't be read, so the changes can't be listed.</p>"
-        elif not groups:
-            body = "<p>This version has the same bindings and device settings as your current config.</p>"
-        else:
-            muted = self.palette().placeholderText().color().name()
-            normal = self.palette().text().color().name()  # Qt rich text has no "inherit"; use the theme's
-            rows = []
-            for group, lines in groups.items():
-                rows.append(f"<tr><td colspan='4' style='padding:10px 0 4px'><b>{html.escape(group)}</b></td></tr>")
-                for mark, what, before, after in lines:
-                    rows.append(
-                        f"<tr><td style='color:{colors[mark]}; font-weight:600; padding:2px 6px 2px 8px'>{mark}</td>"
-                        f"<td style='padding:2px 14px 2px 0'>{html.escape(what)}</td>"
-                        f"<td style='padding:2px 8px 2px 0; color:{muted if mark == '+' else normal}'>"
-                        f"{html.escape(before)}</td>"
-                        f"<td style='padding:2px 0'>→&nbsp;<span style='color:{muted if mark == '−' else normal}'>"
-                        f"{html.escape(after)}</span></td></tr>")
-            body = f"<table cellspacing='0'>{''.join(rows)}</table>"
+        body = versions.changes_html(groups, self.palette())
         intro = QLabel("Restoring makes these changes to your config:" if groups else "")
         intro.setVisible(bool(groups))
         view = QTextBrowser()
         view.setHtml(body)
         view.setOpenLinks(False)
-        note = QLabel("Your current config is kept in Recent versions first, so this can be undone.")
+        note = QLabel("Your current config is kept as a version first, so this can be undone.")
         note.setWordWrap(True)
         note.setStyleSheet("color: palette(placeholder-text);")
         buttons = QDialogButtonBox(QDialogButtonBox.StandardButton.Cancel)
@@ -585,6 +583,12 @@ class MainWindow(QMainWindow):
         self._last_written: str | None = None
         self._clipboard: list[tuple[str, dict]] = []
         self.broken: str | None = None  # the YAML error, while config.yaml can't be read
+        # Undo history of unsaved changes: each entry is the whole config as text.
+        # history[0] is what's saved; the last entry is the current state.
+        self.history: list[str] = []
+        self.future: list[str] = []
+        self._record_timer = QTimer(self, singleShot=True, interval=500)
+        self._record_timer.timeout.connect(self._record)
 
         self._build_toolbar()
         self.sidebar = SidebarTree()
@@ -638,32 +642,48 @@ class MainWindow(QMainWindow):
 
     def _build_toolbar(self):
         bar = QToolBar(movable=False)
-        bar.setToolButtonStyle(Qt.ToolButtonStyle.ToolButtonTextBesideIcon)
+        bar.setToolButtonStyle(Qt.ToolButtonStyle.ToolButtonIconOnly)
+        # Some themes draw disabled toolbar buttons almost like enabled ones; make it obvious.
+        bar.setStyleSheet("QToolButton:disabled { color: palette(placeholder-text); }")
         self.addToolBar(bar)
 
-        # Left: InputActions itself — its status and the switch for it.
+        # Left: InputActions itself — its status, and a clear button to stop or start it.
         self.status = QLabel()
         self.status.setContentsMargins(8, 0, 8, 0)
         bar.addWidget(self.status)
-        self.toggle_action = QAction(self)
-        self.toggle_action.triggered.connect(self.toggle_running)
-        bar.addAction(self.toggle_action)
+        self.toggle_action = bar.addAction("", self.toggle_running)
+        bar.widgetForAction(self.toggle_action).setToolButtonStyle(Qt.ToolButtonStyle.ToolButtonTextBesideIcon)
+        self.issues_label = QLabel()  # only shown when InputActions reports a problem
+        self.issues_action = bar.addWidget(self.issues_label)  # toolbar widgets hide via their action
         spacer = QWidget()
         spacer.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Preferred)
         bar.addWidget(spacer)
 
-        # Right: options, backups, then Reload and Save together, Save last.
-        self.yaml_action = bar.addAction(QIcon.fromTheme("text-x-script"), "YAML", self.open_yaml_editor)
-        self.yaml_action.setToolTip("Edit config.yaml directly (developer)")
-        bar.addAction(QIcon.fromTheme("configure"), "Options", self.show_options)
-        backup = QMenu(self)
-        backup.addAction(QIcon.fromTheme("document-export"), "Export YAML", self.export_yaml)
-        backup.addAction(QIcon.fromTheme("document-import"), "Restore from file", self.restore_from_file)
-        backup.addSeparator()
-        self.recent = backup.addMenu(QIcon.fromTheme("document-open-recent"), "Recent versions")
-        self.recent.aboutToShow.connect(self._fill_recent)
-        bar.addWidget(self._menu_button("Backup", "folder-backup", backup))
-        bar.addAction(QIcon.fromTheme("view-refresh"), "Reload", self.reload)
+        # Right: undo, redo and reload as icons; everything occasional in the ☰ menu; Save last.
+        self.undo_action = bar.addAction(_dimmable(QIcon.fromTheme("edit-undo")), "Undo", self.undo)
+        self.undo_action.setToolTip("Undo the last unsaved change (Ctrl+Z)")
+        self.redo_action = bar.addAction(_dimmable(QIcon.fromTheme("edit-redo")), "Redo", self.redo)
+        self.redo_action.setToolTip("Redo (Ctrl+Shift+Z)")
+        # Window-wide, so a focused text box still gets its own Ctrl+Z first.
+        QShortcut(QKeySequence.StandardKey.Undo, self, self.undo)
+        QShortcut(QKeySequence.StandardKey.Redo, self, self.redo)
+        reload = bar.addAction(QIcon.fromTheme("view-refresh"), "Reload", self.reload)
+        reload.setToolTip("Reload config.yaml and InputActions")
+        bar.widgetForAction(reload).setToolButtonStyle(Qt.ToolButtonStyle.ToolButtonTextBesideIcon)
+        bar.addSeparator()
+
+        menu = QMenu(self)
+        menu.addAction(QIcon.fromTheme("configure"), "Options…", self.show_options)
+        self.yaml_action = menu.addAction(QIcon.fromTheme("text-x-script"), "Edit YAML…", self.open_yaml_editor)
+        menu.addSeparator()
+        menu.addAction(QIcon.fromTheme("document-export"), "Export YAML…", self.export_yaml)
+        menu.addAction(QIcon.fromTheme("document-revert"), "Restore…", self.open_versions)
+        hamburger = QToolButton(icon=QIcon.fromTheme("application-menu", QIcon.fromTheme("open-menu-symbolic")))
+        hamburger.setToolTip("Menu")
+        hamburger.setPopupMode(QToolButton.ToolButtonPopupMode.InstantPopup)
+        hamburger.setMenu(menu)
+        hamburger.setStyleSheet("QToolButton::menu-indicator { image: none; }")
+        bar.addWidget(hamburger)
 
         self.save_button = QPushButton(QIcon.fromTheme("document-save"), "Save")
         self.save_button.setToolTip("Save binding changes and reload InputActions (Ctrl+S)")
@@ -758,7 +778,7 @@ class MainWindow(QMainWindow):
         ext = QPushButton(QIcon.fromTheme("document-edit"), "Open in text editor")
         ext.clicked.connect(lambda: QDesktopServices.openUrl(QUrl.fromLocalFile(str(cfg.CONFIG_PATH))))
         restore = QPushButton(QIcon.fromTheme("document-open-recent"), "Restore a previous version")
-        restore.clicked.connect(lambda: (self._fill_recent(), self.recent.exec(QCursor.pos())))
+        restore.clicked.connect(self.open_versions)
 
         text = QVBoxLayout()
         text.setSpacing(4)
@@ -831,25 +851,6 @@ class MainWindow(QMainWindow):
         if dialog.exec() == QDialog.DialogCode.Accepted and dialog.dirty:
             self.apply_now(dialog.apply_to, take_snapshot=True)
 
-    def _fill_recent(self):
-        self.recent.clear()
-        orig = writer.original_path(cfg.CONFIG_PATH)
-        snaps = writer.snapshots()
-        for snap in snaps:
-            stamp = datetime.strptime(snap.stem.removeprefix("config-"), "%Y%m%d-%H%M%S")
-            try:
-                broken = not yaml_editor.check(snap.read_text())[0]
-            except OSError:
-                broken = True
-            label = f"Before save at {stamp:%b %d, %H:%M:%S}" + ("  (has errors)" if broken else "")
-            self.recent.addAction(label, lambda s=snap: self.restore(s))
-        if orig.exists():
-            if snaps:
-                self.recent.addSeparator()
-            self.recent.addAction("Original (before Actuator)", lambda: self.restore(orig))
-        if self.recent.isEmpty():
-            self.recent.addAction("No saved versions yet").setEnabled(False)
-
     def tab_visible(self, title: str) -> bool:
         return self.settings.value(f"tabs/{title}", True, type=bool)
 
@@ -858,16 +859,17 @@ class MainWindow(QMainWindow):
         self.toggle_action.setText("Stop" if self.running else "Start")
         self.toggle_action.setIcon(QIcon.fromTheme(
             "media-playback-pause" if self.running else "media-playback-start"))
+        self.toggle_action.setToolTip("Pause InputActions" if self.running else "Start InputActions")
         self._update_status()
 
     def _update_status(self):
         state = ("<span style='color:#2e9e5b'>● Running</span>" if self.running
                  else "<span style='color:#c58a00'>● Stopped</span>" if self.loaded
                  else "<span style='color:#c58a00'>● Not loaded</span>")
-        tail = ("" if not self._issues  # only worth showing when something's wrong
-                else " &nbsp; · &nbsp; <span style='color:#d24545'>⚠ Config issues (hover for details)</span>")
-        self.status.setText(f"<b>InputActions</b> &nbsp; {state}{tail}")
-        self.status.setToolTip(self._issues)
+        self.status.setText(f"<b>InputActions</b> &nbsp; {state}")
+        self.issues_action.setVisible(bool(self._issues))  # only worth showing when something's wrong
+        self.issues_label.setText("<span style='color:#d24545'>⚠ Config issues</span>")
+        self.issues_label.setToolTip(self._issues)
         self.save_button.setEnabled(self.dirty and getattr(self, "broken", None) is None)
         self.save_button.setToolTip("Save binding changes and reload InputActions (Ctrl+S)" if self.dirty
                                     else "Nothing to save")
@@ -880,7 +882,54 @@ class MainWindow(QMainWindow):
 
     def mark_dirty(self):
         self.dirty = True
+        self._record_timer.start()  # quick successive edits become one undo step
+        self._update_undo()
         self._update_status()
+
+    # Undo ------------------------------------------------------------------
+
+    def _reset_history(self):
+        self._record_timer.stop()
+        self.history = [writer.render(self.config)] if self.config else []
+        self.future = []
+        self._update_undo()
+
+    def _record(self):
+        if not self.config or not self.history:
+            return
+        state = writer.render(self.config)
+        if state != self.history[-1]:
+            self.history.append(state)
+            self.future.clear()
+        self._update_undo()
+
+    def _go_to(self, state: str):
+        self.config = cfg.loads(state, cfg.CONFIG_PATH)
+        self.dirty = len(self.history) > 1
+        self._fill_sidebar()
+        self._update_status()
+
+    def undo(self):
+        if self._record_timer.isActive():  # an edit is still being grouped: record it first
+            self._record_timer.stop()
+            self._record()
+        if len(self.history) > 1:
+            self.future.append(self.history.pop())
+            self._go_to(self.history[-1])
+            self.statusBar().showMessage("Undone." if self.dirty else "Undone. Back to what's saved.", 3000)
+        self._update_undo()
+
+    def redo(self):
+        if self.future:
+            self.history.append(self.future.pop())
+            self._go_to(self.history[-1])
+            self.statusBar().showMessage("Redone.", 3000)
+        self._update_undo()
+
+    def _update_undo(self):
+        if hasattr(self, "undo_action"):
+            self.undo_action.setEnabled(len(self.history) > 1 or self._record_timer.isActive())
+            self.redo_action.setEnabled(bool(self.future))
 
     @property
     def running(self) -> bool:
@@ -977,6 +1026,15 @@ class MainWindow(QMainWindow):
             return False
         change(self.config)
         self.config.reindex()
+        # Organizing changes are saved, not undoable; carry them through the undo history
+        # so undoing a binding edit later doesn't bring back an old folder or app list.
+        def carried(state: str) -> str:
+            c = cfg.loads(state, cfg.CONFIG_PATH)
+            change(c)
+            c.reindex()
+            return writer.render(c)
+        self.history = [carried(x) for x in self.history]
+        self.future = [carried(x) for x in self.future]
         run_ctl("config", "reload")
         self._check_issues()
         return True
@@ -993,9 +1051,16 @@ class MainWindow(QMainWindow):
             QMessageBox.critical(self, "Actuator", f"Couldn't save. Your config wasn't changed.\n\n{e}")
             return
         self.dirty = False
-        self._after_write(previous)
+        self._after_write(previous)  # reloads, which also starts a fresh undo history
 
-    def restore(self, source: Path):
+    def open_versions(self):
+        dialog = versions.VersionsDialog(self, None if self.broken else self.config)
+        if dialog.exec() and dialog.chosen:
+            listed = dialog.chosen.parent == writer.SNAPSHOT_DIR or \
+                dialog.chosen == writer.original_path(cfg.CONFIG_PATH)
+            self.restore(dialog.chosen, previewed=listed)  # files from elsewhere get a preview first
+
+    def restore(self, source: Path, previewed: bool = False):
         if not self._ask_discard("restore"):
             return
         try:
@@ -1004,7 +1069,9 @@ class MainWindow(QMainWindow):
             QMessageBox.critical(self, "Actuator", f"Couldn't open {source}\n\n{e}")
             return
         ok, message, _line = yaml_editor.check(text)
-        if not ok:
+        if previewed:
+            pass  # the Restore window already showed what this does
+        elif not ok:
             # A broken version can still hold edits worth having; restoring it shows the red bar to fix it.
             answer = QMessageBox.warning(
                 self, "This version has an error",
@@ -1038,11 +1105,6 @@ class MainWindow(QMainWindow):
                 writer.restore(cfg.CONFIG_PATH, previous)
                 run_ctl("config", "reload")
                 self.load()
-
-    def restore_from_file(self):
-        source, _ = QFileDialog.getOpenFileName(self, "Restore from file", str(Path.home()), "YAML (*.yaml *.yml)")
-        if source:
-            self.restore(Path(source))
 
     def export_yaml(self):
         default = Path.home() / f"inputactions-{date.today().isoformat()}.yaml"
@@ -1078,6 +1140,7 @@ class MainWindow(QMainWindow):
             return
         self._set_broken(None)
         self.dirty = False
+        self._reset_history()
         self._check_issues()
         self._fill_sidebar()
 

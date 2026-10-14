@@ -478,7 +478,7 @@ class DeviceSettingsPage(QWidget):
             self, "Reset all device settings?",
             f"This removes all {n} device rule{'s' if n != 1 else ''}, including device-specific ones, "
             "so every device uses InputActions' defaults.\n\nIt takes effect when you save, and the "
-            "save can be undone from Backup → Recent versions.",
+            "save can be undone from ☰ → Restore.",
             QMessageBox.StandardButton.Reset | QMessageBox.StandardButton.Cancel,
         )
         if answer != QMessageBox.StandardButton.Reset:
@@ -562,7 +562,7 @@ def confirm_open(parent, settings) -> bool:
     box = QMessageBox(QMessageBox.Icon.Warning, "Device settings",
                       "These change how InputActions reads your mouse, touchpad and touchscreen: swipe "
                       "angles, thresholds and timeouts.\n\nWrong values can make gestures hard to trigger "
-                      "or fire by accident. Saved changes can be undone from Backup → Recent versions.",
+                      "or fire by accident. Saved changes can be undone from ☰ → Restore.",
                       QMessageBox.StandardButton.Open | QMessageBox.StandardButton.Cancel, parent)
     skip = QCheckBox("Don't show this again")
     box.setCheckBox(skip)

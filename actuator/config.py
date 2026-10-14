@@ -211,7 +211,12 @@ def ensure_exists(path: Path | None = None) -> bool:
 
 def load(path: Path | None = None) -> Config:
     path = path or CONFIG_PATH
-    text = path.read_text()
+    return loads(path.read_text(), path)
+
+
+def loads(text: str, path: Path | None = None) -> Config:
+    """A config from YAML text (as read from disk, or an undo step)."""
+    path = path or CONFIG_PATH
     config = Config(path=path, data=YAML(typ="rt").load(text) or {})
     for line in text.splitlines():
         if m := BUTTON_LINE.match(line):
