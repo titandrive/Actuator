@@ -312,7 +312,7 @@ DEV_FEATURES = [  # (settings key, label, tooltip) — all off by default
     ("yaml_editor", "Enable Full YAML Editor", "Adds a YAML button to the toolbar to edit config.yaml directly."),
     ("only_if", "Enable Only If Conditions", "Shows the condition builder in the binding editor."),
     ("git_autocommit", "Enable Git Auto-Commit",
-     "Commits config.yaml to its git repository whenever Actuator saves it. See the README for setup."),
+     "Commits config.yaml to its git repository every time Actuator changes it. See the README for setup."),
 ]
 
 
@@ -410,16 +410,6 @@ class OptionsDialog(QDialog):
         self.git_box = QWidget()
         gl = QVBoxLayout(self.git_box)
         gl.setContentsMargins(26, 0, 0, 4)
-        when_row = QHBoxLayout()
-        when_row.addWidget(QLabel("Commit:"))
-        self.git_when = QComboBox()
-        self.git_when.addItem("When I save", "saves")
-        self.git_when.addItem("Every change, including folders and apps", "all")
-        self.git_when.setCurrentIndex(max(self.git_when.findData(
-            self.settings.value("git/when", "saves", type=str)), 0))
-        when_row.addWidget(self.git_when)
-        when_row.addStretch(1)
-        gl.addLayout(when_row)
         self.git_push = QCheckBox("Push after committing")
         self.git_push.setChecked(self.settings.value("git/push", False, type=bool))
         gl.addWidget(self.git_push)
@@ -510,7 +500,6 @@ class OptionsDialog(QDialog):
         if self.dev_box.isVisible():
             for box in self.features.values():
                 box.setChecked(False)
-            self.git_when.setCurrentIndex(self.git_when.findData("saves"))
             self.git_push.setChecked(False)
 
     def _toast(self, text: str):
@@ -922,7 +911,6 @@ class MainWindow(QMainWindow):
             self.settings.setValue(f"tabs/{title}", on)
         for key, box in dialog.features.items():
             self.settings.setValue(f"dev/{key}", box.isChecked())
-        self.settings.setValue("git/when", dialog.git_when.currentData())
         self.settings.setValue("git/push", dialog.git_push.isChecked())
         self._apply_features()
         self._fill_sidebar()
@@ -1250,7 +1238,7 @@ class MainWindow(QMainWindow):
         self.future = [carried(x) for x in self.future]
         run_ctl("config", "reload")
         self._check_issues()
-        self._git_sync(old, "save" if take_snapshot else "instant")
+        self._git_sync(old)
         return True
 
     def save(self):
@@ -1322,7 +1310,7 @@ class MainWindow(QMainWindow):
         body = f"{icon} {html.escape(text)}"
         if link:
             body = (f"<a href='{html.escape(link)}' style='color:{color}; text-decoration:none'>"
-                    f"{body} ↗</a>")
+                    f"{body}</a>")
         self.git_status.setText(f"<span style='color:{color}'>{body}</span>")
         self.git_status.setToolTip(f"Open {link}\n\n{detail}" if link and detail else (detail or text))
         self.git_status.setVisible(True)
@@ -1331,12 +1319,9 @@ class MainWindow(QMainWindow):
         else:
             self._git_hide.start()
 
-    def _git_sync(self, old_text: str | None, kind: str):
-        """Commit config.yaml (and push) if that developer option is on. kind is "save" for
-        Save-like writes, "instant" for organizing changes such as folders."""
+    def _git_sync(self, old_text: str | None):
+        """Commit config.yaml (and push) after any write, if that developer option is on."""
         if not self.feature("git_autocommit"):
-            return
-        if kind == "instant" and self.settings.value("git/when", "saves", type=str) != "all":
             return
         path = cfg.CONFIG_PATH
         root = gitsync.repo_root(path)
@@ -1379,7 +1364,7 @@ class MainWindow(QMainWindow):
                 run_ctl("config", "reload")
                 self.load()
                 return  # back where it was: nothing to commit
-        self._git_sync(old_text, "save")
+        self._git_sync(old_text)
 
     def export_yaml(self):
         default = Path.home() / f"inputactions-{date.today().isoformat()}.yaml"

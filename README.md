@@ -75,9 +75,10 @@ Click the version number in Options ten times. Developer mode adds toggles for d
 
 ## Git auto-commit (developer mode)
 
-Actuator can commit `config.yaml` to git every time it saves, and optionally push it, so your setup is
-versioned and backed up. Turn it on in Options → Developer Options → Enable Git Auto-Commit, then choose
-when to commit (when you save, or on every change including folders and apps) and whether to push.
+Actuator can commit `config.yaml` to git every time it changes the file, and optionally push it, so your
+setup is versioned and backed up. Turn it on in Options → Developer Options → Enable Git Auto-Commit, and
+choose whether to push. Every change is committed, including folders, apps and button names, since those
+are stored in the file too.
 
 Actuator only commits `config.yaml`; anything else in the repository is left alone. Commit messages
 describe the change, for example `Actuator: Firefox: ~ Meta+W: Ctrl+W → Ctrl+T`.
