@@ -8,7 +8,7 @@ from PySide6.QtCore import Qt, Signal
 from PySide6.QtGui import QIcon
 from PySide6.QtWidgets import (
     QCheckBox, QDialog, QDialogButtonBox, QFrame, QHBoxLayout, QLabel, QLineEdit, QMessageBox,
-    QPlainTextEdit, QPushButton, QScrollArea, QSlider, QSplitter, QStackedWidget, QToolButton,
+    QPlainTextEdit, QPushButton, QScrollArea, QSlider, QSplitter, QToolButton,
     QTreeWidget, QTreeWidgetItem, QVBoxLayout, QWidget,
 )
 from ruamel.yaml import YAML

@@ -1,0 +1,11 @@
+[Desktop Entry]
+Type=Application
+Name=Actuator
+GenericName=InputActions Configuration
+Comment=Configure mouse buttons, touchpad gestures and more for InputActions
+Exec=actuator
+Icon=input-mouse
+Terminal=false
+Categories=Settings;HardwareSettings;Qt;KDE;
+Keywords=mouse;touchpad;gesture;inputactions;shortcut;binding;
+StartupWMClass=actuator

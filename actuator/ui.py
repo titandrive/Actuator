@@ -9,12 +9,12 @@ from pathlib import Path
 
 from PySide6.QtCore import QFileSystemWatcher, QPoint, QSettings, QSize, Qt, QTimer, QUrl, Signal
 from PySide6.QtGui import (
-    QAction, QCursor, QDesktopServices, QFontDatabase, QIcon, QKeySequence, QPainter, QPixmap, QShortcut,
+    QDesktopServices, QFontDatabase, QIcon, QKeySequence, QPainter, QPixmap, QShortcut,
 )
 from PySide6.QtWidgets import (
-    QApplication, QDialog, QTextBrowser, QListWidget, QListWidgetItem, QToolTip, QFormLayout, QSpinBox, QDialogButtonBox, QFileDialog, QFrame, QGridLayout, QHBoxLayout,
+    QApplication, QDialog, QTextBrowser, QListWidget, QListWidgetItem, QToolTip, QFormLayout, QSpinBox, QDialogButtonBox, QFileDialog, QFrame, QHBoxLayout,
     QCheckBox, QComboBox, QGroupBox, QInputDialog, QLabel, QLineEdit, QMainWindow, QMenu,
-    QMessageBox, QPlainTextEdit, QPushButton, QScrollArea, QSizePolicy,
+    QMessageBox, QPushButton, QScrollArea, QSizePolicy,
     QSplitter, QStackedWidget, QTabWidget, QToolBar, QToolButton, QTreeWidget,
     QTreeWidgetItem, QVBoxLayout, QWidget,
 )
@@ -27,11 +27,12 @@ from . import copying
 from . import diffing
 from . import describe as d
 from . import keys
+from . import pause
 from . import versions
 from . import writer
 from . import yaml_editor
 from . import devices as devices_mod
-from .editor import GESTURE_TYPES, BindingEditor, new_button_binding, new_gesture_binding
+from .editor import GESTURE_TYPES, BindingEditor, new_button_binding, new_gesture_binding, record_stroke
 
 ROLE = Qt.ItemDataRole.UserRole
 
@@ -99,6 +100,16 @@ def load_effect() -> tuple[bool, str]:
     """Start InputActions for this session, whether or not it starts at login."""
     ok, out = run("qdbus6", "org.kde.KWin", "/Effects", "loadEffect", EFFECT)
     return ok and out.strip() == "true", out
+
+
+def kwin_pid() -> str:
+    ok, out = run("pidof", "kwin_wayland")
+    if not ok:
+        ok, out = run("pidof", "kwin_x11")
+    return out.split()[0] if ok and out else ""
+
+
+INSTALL_URL = "https://wiki.inputactions.org/main/getting-started/installation/index.html"
 
 
 def active_window_class() -> str | None:
@@ -426,69 +437,106 @@ class OptionsDialog(QDialog):
 
 
 class CaptureDialog(QDialog):
-    """Press a mouse button, or the key combo a mouse button sends, to add it."""
+    """Records a mouse button, or the key combo a mouse button sends, as soon as it opens.
+    Plasma's global shortcuts and InputActions are paused meanwhile, so e.g. a button that
+    sends Alt+F4 is recorded instead of closing the window."""
 
-    def __init__(self, parent):
+    def __init__(self, parent, known: list[cfg.Button]):
         super().__init__(parent)
-        self.setWindowTitle("Add button")
+        self.setWindowTitle("Record button")
         self.src: str | None = None
         self.kind = "mouse"
-        self.prompt = QLabel("Press the button on your mouse here.\n\n"
-                             "Buttons that send a key combo work too.")
+        self.pause = pause.ShortcutPause()
+        self.prompt = QLabel("Press the mouse button you want to bind.\n\n"
+                             "Plasma shortcuts are paused while this is open.")
         self.prompt.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        self.prompt.setMinimumSize(380, 140)
+        self.prompt.setMinimumSize(400, 140)
         self.prompt.setFrameShape(QFrame.Shape.StyledPanel)
+        self.prompt.setStyleSheet("QLabel { border: 2px solid #d24545; border-radius: 6px; }")
         self.found = QLabel()
-        self.found.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self.found.setWordWrap(True)
+        layout = QVBoxLayout(self)
+        layout.addWidget(self.prompt)
+        layout.addWidget(self.found)
+        if known:
+            layout.addWidget(QLabel("Or pick one you've used before:"))
+            row = QHBoxLayout()
+            for btn in known:
+                b = QPushButton(button_name(btn))
+                b.setToolTip(f"Sends {d.button_label(btn.src)}")
+                b.setFocusPolicy(Qt.FocusPolicy.NoFocus)  # keep key presses going to the recorder
+                b.clicked.connect(lambda _=False, btn=btn: self._done(btn.src, btn.kind))
+                row.addWidget(b)
+            row.addStretch(1)
+            layout.addLayout(row)
+        type_row = QHBoxLayout()
         self.manual = QLineEdit(placeholderText="Or type it: forward, extra1, Shift+Meta+[")
-        self.buttons = QDialogButtonBox(QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel)
-        self.buttons.accepted.connect(self._accept)
-        self.buttons.rejected.connect(self.reject)
+        self.manual.returnPressed.connect(self._typed)
+        use = QPushButton("Use")
+        use.clicked.connect(self._typed)
+        type_row.addWidget(self.manual, 1)
+        type_row.addWidget(use)
+        layout.addLayout(type_row)
         self.error = QLabel()
         self.error.setStyleSheet("color: #d24545;")
-        layout = QVBoxLayout(self)
-        for w in (self.prompt, self.found, self.manual, self.error, self.buttons):
-            layout.addWidget(w)
+        layout.addWidget(self.error)
+        cancel = QPushButton("Cancel")
+        cancel.setFocusPolicy(Qt.FocusPolicy.NoFocus)
+        cancel.clicked.connect(self.reject)
+        layout.addWidget(cancel, 0, Qt.AlignmentFlag.AlignRight)
         self.prompt.setFocusPolicy(Qt.FocusPolicy.StrongFocus)
-        self.prompt.setFocus()
         self.prompt.installEventFilter(self)
+        self._left_right: str | None = None
+
+    def showEvent(self, event):
+        super().showEvent(event)
+        self.pause.start()
+        self.prompt.setFocus()
+
+    def done(self, result):
+        self.pause.stop()  # however the window closes
+        super().done(result)
 
     def eventFilter(self, obj, event):
         if obj is self.prompt:
             if event.type() == event.Type.MouseButtonPress:
                 name = keys.MOUSE_BUTTONS.get(event.button())
                 if name in ("left", "right"):
-                    self.found.setText(f"That's the {name} button. Binding it can make your mouse hard to use.")
-                self._set(name or f"button{int(event.button())}", "mouse")
+                    # Probably just clicking the window; only take it if clicked twice on purpose.
+                    if self._left_right == name:
+                        self._done(name, "mouse")
+                    else:
+                        self._left_right = name
+                        self.found.setText(f"That's the {name} button, which you use all the time. "
+                                           f"{name.capitalize()}-click again here to bind it anyway.")
+                else:
+                    self._done(name or f"button{int(event.button())}", "mouse")
                 return True
             if event.type() == event.Type.KeyPress:
+                if event.key() == Qt.Key.Key_Escape and not event.modifiers():
+                    self.reject()
+                    return True
                 combo = keys.from_key_event(event)
                 if combo:
-                    self._set(combo, "shortcut")
+                    self._done(combo, "shortcut")
                 return True
         return super().eventFilter(obj, event)
 
-    def _set(self, src: str, kind: str):
-        self.src, self.kind = src, kind
-        self.manual.clear()
-        if not self.found.text().startswith("That's"):
-            self.found.clear()
-        self.prompt.setText(f"Got it: {d.button_label(src)}\n\nPress another to change it.")
-
-    def _accept(self):
+    def _typed(self):
         text = self.manual.text().strip()
-        if text:
-            try:
-                if "+" in text:
-                    self.src, self.kind = keys.parse_combo(text), "shortcut"
-                else:
-                    self.src, self.kind = keys.to_name(text), "mouse"
-            except ValueError as e:
-                self.error.setText(str(e))
-                return
-        if not self.src:
-            self.error.setText("Press a button first, or type it.")
+        if not text:
+            self.error.setText("Type a button or key combo first.")
             return
+        try:
+            if "+" in text:
+                self._done(keys.parse_combo(text), "shortcut")
+            else:
+                self._done(keys.to_name(text), "mouse")
+        except ValueError as e:
+            self.error.setText(str(e))
+
+    def _done(self, src: str, kind: str):
+        self.src, self.kind = src, kind
         self.accept()
 
 
@@ -576,7 +624,10 @@ class MainWindow(QMainWindow):
         if login_setting() == "":
             set_starts_at_login(True)  # Actuator's default: start with Plasma
         self.loaded = effect_loaded()  # real state, from KWin
-        self.suspended = False  # InputActions can't report this; assume not suspended
+        # InputActions can't report whether it's paused, so remember pausing it ourselves. KWin
+        # restarts with every login, which unpauses it, so the memory only counts for the same KWin.
+        self.suspended = self.loaded and bool(kwin_pid()) and \
+            self.settings.value("suspended_kwin_pid", "", type=str) == kwin_pid()
         last = self.settings.value("last/page", "global|", type=str).split("|", 1)
         self.current = (last[0], last[1] or None) if last[0] in ("global", "app") else ("global", None)
         self._issues = ""
@@ -634,6 +685,9 @@ class MainWindow(QMainWindow):
 
         self._apply_features()
         QTimer.singleShot(0, self._warn_system_config)
+        QTimer.singleShot(0, self._check_installed)
+        pause.recover()  # in case a previous run crashed while shortcuts were paused
+        pause.inputactions_running = lambda: self.running
         self.watcher = QFileSystemWatcher()
         self.watcher.fileChanged.connect(lambda _p: QTimer.singleShot(300, self._file_changed))
         self.load()
@@ -733,6 +787,19 @@ class MainWindow(QMainWindow):
             self.settings.setValue(f"dev/{key}", box.isChecked())
         self._apply_features()
         self._fill_sidebar()
+
+    def _check_installed(self):
+        if shutil.which("inputactions"):
+            return
+        box = QMessageBox(QMessageBox.Icon.Warning, "InputActions isn't installed",
+                          "Actuator edits the configuration of InputActions, which doesn't seem to be "
+                          "installed: the <code>inputactions</code> command wasn't found.<br><br>"
+                          "You can still edit your config, but Start/Stop, Reload and Pick window won't "
+                          f"work until it is. <a href='{INSTALL_URL}'>How to install InputActions</a>",
+                          QMessageBox.StandardButton.Ok, self)
+        box.setTextFormat(Qt.TextFormat.RichText)
+        box.setTextInteractionFlags(Qt.TextInteractionFlag.TextBrowserInteraction)
+        box.exec()
 
     def _warn_system_config(self):
         if not cfg.SYSTEM_CONFIG_PATH.exists():
@@ -940,6 +1007,7 @@ class MainWindow(QMainWindow):
             ok, out = run_ctl("suspend")
             if ok:
                 self.suspended = True
+                self.settings.setValue("suspended_kwin_pid", kwin_pid())
         else:
             ok, out = True, ""
             if not self.loaded:
@@ -952,6 +1020,8 @@ class MainWindow(QMainWindow):
                 ok, out = run_ctl("resume")
                 if ok:
                     self.suspended = False
+            if ok:
+                self.settings.remove("suspended_kwin_pid")
         if not ok:
             QMessageBox.warning(self, "Actuator", f"InputActions didn't respond.\n\n{out}")
         self._update_toggle()
@@ -1342,6 +1412,7 @@ class MainWindow(QMainWindow):
     # Pages -----------------------------------------------------------------
 
     def _set_page(self, widget: QWidget):
+        pause._release()  # a recording on the page being replaced must not leave shortcuts paused
         while self.pages.count():
             old = self.pages.widget(0)
             self.pages.removeWidget(old)
@@ -1388,6 +1459,8 @@ class MainWindow(QMainWindow):
         page.tree.customContextMenuRequested.connect(lambda pos: self._binding_menu(page, pos))
         QShortcut(QKeySequence.StandardKey.Copy, page.tree, lambda: self._copy_binding(page.tree.currentItem()))
         QShortcut(QKeySequence.StandardKey.Paste, page.tree, self._paste_here)
+        QShortcut(QKeySequence.StandardKey.Delete, page.tree,
+                  lambda: page.editor.binding and page.editor._delete())
 
     # Copy and paste ---------------------------------------------------------
 
@@ -1416,6 +1489,9 @@ class MainWindow(QMainWindow):
             menu.addAction(QIcon.fromTheme("edit-paste"), "Paste", self._paste_here)
         if menu.isEmpty():
             menu.addAction("Nothing to copy here").setEnabled(False)
+        if item and item.flags() & Qt.ItemFlag.ItemIsEditable:
+            menu.addSeparator()
+            menu.addAction(QIcon.fromTheme("edit-rename"), "Rename…", lambda: page.tree.editItem(item, 0))
         if binding:
             menu.addSeparator()
             menu.addAction(QIcon.fromTheme("edit-delete"), "Delete", page.editor._delete)
@@ -1496,7 +1572,7 @@ class MainWindow(QMainWindow):
         for btn, b in bound:  # only buttons that do something here
             name = button_name(btn)
             item = page.add_row([name, d.summary(b)], {"title": f"{name} in {where}", "binding": b, "src": btn.src})
-            item.setToolTip(0, f"Sends {d.button_label(btn.src)}. Double-click to rename.")
+            item.setToolTip(0, f"Sends {d.button_label(btn.src)}. Double-click or right-click to rename.")
             item.setFlags(item.flags() | Qt.ItemFlag.ItemIsEditable)
         if gestures:
             if both:
@@ -1504,15 +1580,10 @@ class MainWindow(QMainWindow):
             for b in gestures:
                 title = d.gesture_title(b.data)
                 page.add_row([title, d.summary(b)], {"title": f"{title} in {where}", "binding": b})
-        menu = QMenu(self)
-        unbound = [btn for btn in self.config.buttons if btn.src not in {x.src for x, _b in bound}]
-        for btn in unbound:
-            menu.addAction(f"{button_name(btn)}  ({d.button_label(btn.src)})" if button_name(btn) != d.button_label(btn.src)
-                           else button_name(btn), lambda btn=btn: self._bind_button(btn, scope, app))
-        if unbound:
-            menu.addSeparator()
-        menu.addAction(QIcon.fromTheme("input-mouse"), "Press a new button…", lambda: self.add_button(scope, app))
-        page.add_button(self._menu_button("Add button binding", "list-add", menu))
+        add = QPushButton(QIcon.fromTheme("media-record"), "Add button binding")
+        add.setToolTip("Press the mouse button you want to bind")
+        add.clicked.connect(lambda: self.add_button(scope, app))
+        page.add_button(add)
         page.add_button(self._gesture_menu_button("mouse", scope, app))
         page.finish(f"No mouse bindings for {where} yet. Use Add button binding.", select)
         page.tree.setEditTriggers(QTreeWidget.EditTrigger.NoEditTriggers)
@@ -1538,12 +1609,18 @@ class MainWindow(QMainWindow):
 
     def _add_gesture(self, section, trigger_type, scope, app):
         data = new_gesture_binding(self.config, section, trigger_type, scope, app)
+        if trigger_type == "stroke":  # a stroke binding is useless without a recorded shape
+            stroke = record_stroke(self)
+            if not stroke:
+                return
+            data["strokes"] = [stroke]
         self.config.add_binding(section, data)
         self._refresh(lambda p: p.get("binding") is not None and p["binding"].data is data)
 
     def add_button(self, scope, app):
         """Learn a new button by pressing it, then bind it here."""
-        dialog = CaptureDialog(self)
+        bound_here = {x.button for x in self._bindings(scope, app)}
+        dialog = CaptureDialog(self, [b for b in self.config.buttons if b.src not in bound_here])
         if dialog.exec() != QDialog.DialogCode.Accepted:
             return
         src = dialog.src

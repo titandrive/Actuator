@@ -2,7 +2,7 @@
 
 import re
 
-from PySide6.QtCore import Qt, Signal
+from PySide6.QtCore import QProcess, Qt, Signal
 from PySide6.QtGui import QIcon
 from PySide6.QtWidgets import (
     QCheckBox, QComboBox, QDialog, QDialogButtonBox, QFormLayout, QGroupBox, QHBoxLayout, QLabel, QLineEdit,
@@ -16,6 +16,7 @@ from . import conditions as conds
 from . import config as cfg
 from . import describe as d
 from . import keys
+from . import pause
 
 # Trigger types each device section supports.
 GESTURE_TYPES = {
@@ -304,6 +305,55 @@ def load_yaml(text: str):
     return YAML(typ="safe").load(text)
 
 
+STROKE_TOKEN = re.compile(r"[A-Za-z0-9+/]{16,}={0,2}")
+
+
+class StrokeRecorder(QDialog):
+    """Runs `inputactions record-stroke` and captures the stroke it prints."""
+
+    def __init__(self, parent):
+        super().__init__(parent)
+        self.setWindowTitle("Record stroke")
+        self.stroke: str | None = None
+        self.info = QLabel("Draw the shape now: hold a mouse button and move, or draw with your fingers "
+                           "on the touchpad. InputActions records it when you let go.")
+        self.info.setWordWrap(True)
+        cancel = QPushButton("Cancel")
+        cancel.clicked.connect(self.reject)
+        layout = QVBoxLayout(self)
+        layout.addWidget(self.info)
+        layout.addWidget(cancel, 0, Qt.AlignmentFlag.AlignRight)
+        self.resize(380, 0)
+        self.proc = QProcess(self)
+        self.proc.setProcessChannelMode(QProcess.ProcessChannelMode.MergedChannels)
+        self.proc.finished.connect(self._finished)
+        self.proc.errorOccurred.connect(lambda _e: self._failed("Couldn't run the inputactions command."))
+        self.proc.start("inputactions", ["record-stroke"])
+
+    def _finished(self, *_):
+        out = bytes(self.proc.readAll()).decode(errors="replace")
+        tokens = STROKE_TOKEN.findall(out)
+        if tokens:
+            self.stroke = max(tokens, key=len)  # the encoded stroke is the long base64 string
+            self.accept()
+        else:
+            self._failed("No stroke was recorded." + (f"\n\n{out.strip()}" if out.strip() else ""))
+
+    def _failed(self, message: str):
+        self.info.setText(message)
+
+    def reject(self):
+        if self.proc.state() != QProcess.ProcessState.NotRunning:
+            self.proc.kill()
+            self.proc.waitForFinished(1000)
+        super().reject()
+
+
+def record_stroke(parent) -> str | None:
+    dialog = StrokeRecorder(parent)
+    return dialog.stroke if dialog.exec() else None
+
+
 class ConditionBuilder(QWidget):
     """Rows of [what] [how] [value] that edit a binding's conditions. The app condition,
     when there is one, is shown locked: it comes from where the binding lives."""
@@ -500,11 +550,32 @@ class BindingEditor(QWidget):
         self.when_box = QGroupBox("When")
         self.when_form = QFormLayout(self.when_box)
         self.trigger_label = QLabel()
+        self.type_box = QComboBox()  # for gestures, whose type can be changed
+        self.type_box.currentTextChanged.connect(self._type_changed)
+        trigger_row = QWidget()
+        tr = QHBoxLayout(trigger_row)
+        tr.setContentsMargins(0, 0, 0, 0)
+        tr.addWidget(self.trigger_label)
+        tr.addWidget(self.type_box)
+        tr.addStretch(1)
+        self.strokes_label = QLabel()
+        record = QPushButton(QIcon.fromTheme("draw-freehand", QIcon.fromTheme("media-record")), "Record stroke")
+        record.clicked.connect(self._record_stroke)
+        clear = QPushButton("Clear")
+        clear.clicked.connect(self._clear_strokes)
+        self.strokes_row = QWidget()
+        sr = QHBoxLayout(self.strokes_row)
+        sr.setContentsMargins(0, 0, 0, 0)
+        sr.addWidget(self.strokes_label)
+        sr.addWidget(record)
+        sr.addWidget(clear)
+        sr.addStretch(1)
         self.fingers = QSpinBox(minimum=1, maximum=5)
         self.direction = QComboBox()
         self.instant = QCheckBox("Fire as soon as the button goes down")
         self.block = QCheckBox("Block the normal input while this runs")
-        self.when_form.addRow("Trigger", self.trigger_label)
+        self.when_form.addRow("Trigger", trigger_row)
+        self.when_form.addRow("Strokes", self.strokes_row)
         self.when_form.addRow("Fingers", self.fingers)
         self.when_form.addRow("Direction", self.direction)
         self.when_form.addRow("", self.instant)
@@ -626,8 +697,25 @@ class BindingEditor(QWidget):
         self.cond_box.setVisible(self.show_conditions)
         self.yaml_box.setVisible(self.yaml_button.isChecked())
 
-        self.trigger_label.setText(" · ".join(d.trigger_parts({"type": t, **{
-            k: g[k] for k in ("mouse_buttons", "shortcut") if k in g}})))
+        changeable = not b.button and t not in ("press", "shortcut") and b.section in GESTURE_TYPES
+        self.trigger_label.setVisible(not changeable)
+        self.type_box.setVisible(changeable)
+        if changeable:
+            self.type_box.blockSignals(True)
+            self.type_box.clear()
+            for gt in GESTURE_TYPES[b.section]:
+                if gt not in ("press", "shortcut"):
+                    self.type_box.addItem(gt.capitalize(), gt)
+            if self.type_box.findData(t) < 0:
+                self.type_box.addItem(t.capitalize(), t)
+            self.type_box.setCurrentIndex(self.type_box.findData(t))
+            self.type_box.blockSignals(False)
+        else:
+            self.trigger_label.setText(" · ".join(d.trigger_parts({"type": t, **{
+                k: g[k] for k in ("mouse_buttons", "shortcut") if k in g}})))
+        self.when_form.setRowVisible(self.strokes_row, t == "stroke")
+        n = len(g.get("strokes") or []) if isinstance(g.get("strokes"), list) else (1 if g.get("strokes") else 0)
+        self.strokes_label.setText(f"{n} recorded" if n else "None yet. Record one, or this gesture won't work.")
         has_fingers = "fingers" in g or (b.section in FINGER_SECTIONS and t in FINGER_TYPES)
         self.when_form.setRowVisible(self.fingers, has_fingers)
         if has_fingers:
@@ -690,6 +778,46 @@ class BindingEditor(QWidget):
         self.yaml.setPlainText(d.to_yaml(self.binding.data))
         self.changed.emit()
 
+    def _type_changed(self, _text):
+        if self._loading or not self.binding:
+            return
+        g, new = self.binding.data, self.type_box.currentData()
+        if not new or new == g.get("type"):
+            return
+        g["type"] = new
+        if self.binding.section in FINGER_SECTIONS and new in FINGER_TYPES:
+            g.setdefault("fingers", 3)
+        else:
+            g.pop("fingers", None)
+        if new in DIRECTIONS:
+            if str(g.get("direction")) not in DIRECTIONS[new]:
+                g["direction"] = DIRECTIONS[new][0]
+        else:
+            g.pop("direction", None)
+        if new != "stroke":
+            g.pop("strokes", None)
+        self._commit()
+        self.show_binding(self.title.text(), self.binding)  # rows for the new type
+        if new == "stroke" and not g.get("strokes"):
+            self._record_stroke()
+
+    def _record_stroke(self):
+        if not self.binding:
+            return
+        stroke = record_stroke(self)
+        if stroke:
+            g = self.binding.data
+            strokes = g.get("strokes")
+            strokes = list(strokes) if isinstance(strokes, list) else ([strokes] if strokes else [])
+            g["strokes"] = strokes + [stroke]
+            self._commit()
+            self.show_binding(self.title.text(), self.binding)
+
+    def _clear_strokes(self):
+        if self.binding and self.binding.data.pop("strokes", None) is not None:
+            self._commit()
+            self.show_binding(self.title.text(), self.binding)
+
     def _conditions_edited(self):
         if self._loading or not self.binding:
             return
@@ -717,11 +845,16 @@ class BindingEditor(QWidget):
 
     def _record_toggled(self, on: bool):
         if on:
+            self._pause = pause.ShortcutPause()
+            self._pause.start()  # so Meta+W, Alt+F4 etc. are recorded instead of triggering
             self.value.start()
             self.record.setText("Stop")
-            self.value_hint.setText("Recording. Press keys, then click Stop. Shortcuts Plasma uses "
-                                    "(like Meta+W) may not reach Actuator; type or pick those instead.")
+            self.value_hint.setText("Recording. Press keys, then click Stop. "
+                                    "Plasma shortcuts are paused until you do.")
         else:
+            if getattr(self, "_pause", None):
+                self._pause.stop()
+                self._pause = None
             self.value.stop()
             self.record.setText("Record")
             self._fill_hint()

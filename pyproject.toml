@@ -1,0 +1,24 @@
+[build-system]
+requires = ["setuptools>=64"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "actuator"
+dynamic = ["version"]
+description = "A GUI for configuring InputActions mouse, touchpad and touchscreen bindings"
+readme = "README.md"
+license = "MIT"
+requires-python = ">=3.11"
+dependencies = ["PySide6>=6.5", "ruamel.yaml>=0.17"]
+
+[project.urls]
+Homepage = "https://github.com/titandrive/Actuator"
+
+[project.gui-scripts]
+actuator = "actuator.__main__:main"
+
+[tool.setuptools]
+packages = ["actuator"]
+
+[tool.setuptools.dynamic]
+version = { attr = "actuator.__version__" }
