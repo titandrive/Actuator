@@ -873,6 +873,9 @@ class MainWindow(QMainWindow):
         self._build_toolbar()
         self.sidebar = SidebarTree()
         self.sidebar.setColumnCount(2)  # name, binding count
+        # Hover and selection cover whole rows, not each cell separately (some themes draw both).
+        self.sidebar.setSelectionBehavior(QTreeWidget.SelectionBehavior.SelectRows)
+        self.sidebar.setAllColumnsShowFocus(True)
         self.sidebar.header().setStretchLastSection(False)
         self.sidebar.header().setSectionResizeMode(0, self.sidebar.header().ResizeMode.Stretch)
         self.sidebar.header().setSectionResizeMode(1, self.sidebar.header().ResizeMode.ResizeToContents)
@@ -1522,6 +1525,7 @@ class MainWindow(QMainWindow):
             font.setPointSizeF(font.pointSizeF() * 0.9)
             item.setFont(0, font)
             self.sidebar.addTopLevelItem(item)
+            item.setFirstColumnSpanned(True)  # only works once it's in the tree
 
         def count(payload) -> str:
             if not (isinstance(payload, tuple) and payload[0] in ("global", "app")):
@@ -1552,6 +1556,7 @@ class MainWindow(QMainWindow):
             font = f.font(0)
             font.setBold(True)
             f.setFont(0, font)
+            f.setFirstColumnSpanned(True)  # no count column, so one cell: one hover box
             for app in shown:
                 items[("app", app)] = entry(apps_mod.display_name(app), apps_mod.icon_name(app), ("app", app), f)
             f.setExpanded(folder not in collapsed)
