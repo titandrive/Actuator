@@ -7,7 +7,7 @@ from pathlib import Path
 from PySide6.QtCore import Qt
 from PySide6.QtGui import QColor, QIcon, QPalette
 from PySide6.QtWidgets import (
-    QDialog, QFileDialog, QHBoxLayout, QLabel, QListWidget, QListWidgetItem, QMessageBox, QPushButton,
+    QDialog, QFileDialog, QHBoxLayout, QLabel, QListWidget, QListWidgetItem, QMenu, QMessageBox, QPushButton,
     QSplitter, QTextBrowser, QVBoxLayout, QWidget,
 )
 
@@ -82,6 +82,14 @@ class VersionsDialog(QDialog):
 
         from_file = QPushButton(QIcon.fromTheme("document-import"), "Restore from file…")
         from_file.clicked.connect(self._from_file)
+        open_menu = QMenu(self)
+        open_menu.addAction(QIcon.fromTheme("text-x-script"), "View YAML", self._view)
+        open_menu.addAction(QIcon.fromTheme("document-edit"), "Open in text editor",
+                            lambda: self._path() and yaml_editor.open_external(self._path()))
+        open_menu.addAction(QIcon.fromTheme("folder-open"), "Show in folder",
+                            lambda: self._path() and yaml_editor.reveal(self._path()))
+        self.open = QPushButton(QIcon.fromTheme("document-open"), "Open")
+        self.open.setMenu(open_menu)
         self.delete = QPushButton(QIcon.fromTheme("edit-delete"), "Delete")
         self.delete.clicked.connect(self._delete)
         self.restore = QPushButton(QIcon.fromTheme("document-revert"), "Restore")
@@ -94,6 +102,7 @@ class VersionsDialog(QDialog):
         note.setStyleSheet("color: palette(placeholder-text);")
         buttons = QHBoxLayout()
         buttons.addWidget(from_file)
+        buttons.addWidget(self.open)
         buttons.addWidget(self.delete)
         buttons.addStretch(1)
         buttons.addWidget(self.restore)
@@ -123,6 +132,7 @@ class VersionsDialog(QDialog):
             self.view.setHtml("<p>A version is kept every time you save, so you can come back to it here.</p>")
             self.restore.setEnabled(False)
             self.delete.setEnabled(False)
+            self.open.setEnabled(False)
             return
         row = next((i for i in range(self.list.count())
                     if keep and self.list.item(i).data(Qt.ItemDataRole.UserRole) == str(keep)), 0)
@@ -136,6 +146,7 @@ class VersionsDialog(QDialog):
         path = self._path()
         self.restore.setEnabled(path is not None)
         self.delete.setEnabled(path is not None)
+        self.open.setEnabled(path is not None)
         if not path:
             return
         self.title.setText(item.text())
@@ -154,6 +165,17 @@ class VersionsDialog(QDialog):
         groups = diffing.changes(self.current, cfg.loads(text, path)) if self.current else None
         intro = "<p>Restoring makes these changes to your config:</p>" if groups else ""
         self.view.setHtml(intro + changes_html(groups, self.palette()))
+
+    def _view(self):
+        path = self._path()
+        if not path:
+            return
+        try:
+            text = path.read_text()
+        except OSError as e:
+            QMessageBox.warning(self, "Actuator", f"Couldn't open it.\n\n{e}")
+            return
+        yaml_editor.YamlEditor(self, path, text, title=f"View YAML – {self.title.text()}", read_only=True).exec()
 
     def _restore(self):
         path = self._path()

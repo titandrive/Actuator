@@ -162,10 +162,25 @@ class CodeEdit(QPlainTextEdit):
         painter.end()
 
 
+def reveal(path) -> None:
+    """Open the file manager with the file selected (Dolphin and others support this)."""
+    ok = subprocess.run(
+        ["qdbus6", "org.freedesktop.FileManager1", "/org/freedesktop/FileManager1",
+         "org.freedesktop.FileManager1.ShowItems", QUrl.fromLocalFile(str(path)).toString(), ""],
+        capture_output=True, timeout=5).returncode == 0
+    if not ok:
+        QDesktopServices.openUrl(QUrl.fromLocalFile(str(path.parent)))
+
+
+def open_external(path) -> None:
+    QDesktopServices.openUrl(QUrl.fromLocalFile(str(path)))
+
+
 class YamlEditor(QDialog):
-    def __init__(self, parent, path, text: str):
+    def __init__(self, parent, path, text: str, title: str | None = None, read_only: bool = False):
         super().__init__(parent)
-        self.setWindowTitle(f"Edit {path.name}")
+        self.read_only = read_only
+        self.setWindowTitle(title or f"Edit {path.name}")
         self.original = text
         self.edit = CodeEdit(text)
         self.edit.setFont(QFontDatabase.systemFont(QFontDatabase.SystemFont.FixedFont))
@@ -187,12 +202,17 @@ class YamlEditor(QDialog):
         row.addWidget(self.go_to)
         self.path = path
         open_ext = QPushButton(QIcon.fromTheme("document-edit"), "Open in text editor")
-        open_ext.setToolTip("Open config.yaml in your default editor for YAML files")
-        open_ext.clicked.connect(lambda: QDesktopServices.openUrl(QUrl.fromLocalFile(str(path))))
-        reveal = QPushButton(QIcon.fromTheme("folder-open"), "Show in folder")
-        reveal.clicked.connect(self._reveal)
+        open_ext.setToolTip("Open the file in your default editor for YAML files")
+        open_ext.clicked.connect(lambda: open_external(path))
+        reveal_button = QPushButton(QIcon.fromTheme("folder-open"), "Show in folder")
+        reveal_button.clicked.connect(lambda: reveal(path))
         self.buttons.addButton(open_ext, QDialogButtonBox.ButtonRole.ActionRole)
-        self.buttons.addButton(reveal, QDialogButtonBox.ButtonRole.ActionRole)
+        self.buttons.addButton(reveal_button, QDialogButtonBox.ButtonRole.ActionRole)
+        if read_only:  # a viewer: no saving, nothing to warn about
+            self.edit.setReadOnly(True)
+            self.buttons.button(QDialogButtonBox.StandardButton.Save).hide()
+            self.buttons.button(QDialogButtonBox.StandardButton.Cancel).setText("Close")
+            note.hide()
         # Edits made in another editor while this is open: reload them, or warn before overwriting.
         self.watcher = QFileSystemWatcher([str(path)], self)
         self.watcher.fileChanged.connect(lambda _p: QTimer.singleShot(200, self._disk_changed))
@@ -207,15 +227,6 @@ class YamlEditor(QDialog):
         self._timer.timeout.connect(self._validate)
         self.edit.textChanged.connect(self._timer.start)
         self._validate()
-
-    def _reveal(self):
-        """Open the file manager with the file selected (Dolphin and others support this)."""
-        ok = subprocess.run(
-            ["qdbus6", "org.freedesktop.FileManager1", "/org/freedesktop/FileManager1",
-             "org.freedesktop.FileManager1.ShowItems", QUrl.fromLocalFile(str(self.path)).toString(), ""],
-            capture_output=True, timeout=5).returncode == 0
-        if not ok:
-            QDesktopServices.openUrl(QUrl.fromLocalFile(str(self.path.parent)))
 
     def _disk_changed(self):
         if str(self.path) not in self.watcher.files() and self.path.exists():
