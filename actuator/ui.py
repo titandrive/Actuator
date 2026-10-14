@@ -487,20 +487,19 @@ class MainWindow(QMainWindow):
         bar = QToolBar(movable=False)
         bar.setToolButtonStyle(Qt.ToolButtonStyle.ToolButtonTextBesideIcon)
         self.addToolBar(bar)
+
+        # Left: InputActions itself — its status and the switch for it.
         self.status = QLabel()
-        self.status.setContentsMargins(8, 0, 12, 0)
+        self.status.setContentsMargins(8, 0, 8, 0)
         bar.addWidget(self.status)
+        self.toggle_action = QAction(self)
+        self.toggle_action.triggered.connect(self.toggle_running)
+        bar.addAction(self.toggle_action)
         spacer = QWidget()
         spacer.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Preferred)
         bar.addWidget(spacer)
 
-        self.toggle_action = QAction(self)
-        self.toggle_action.triggered.connect(self.toggle_running)
-        bar.addAction(self.toggle_action)
-        bar.addAction(QIcon.fromTheme("view-refresh"), "Reload", self.reload)
-        self.save_action = bar.addAction(QIcon.fromTheme("document-save"), "Save", self.save)
-        self.save_action.setShortcut("Ctrl+S")
-
+        # Right: the config — backups, options, then Reload and Save together, Save last.
         backup = QMenu(self)
         backup.addAction(QIcon.fromTheme("document-export"), "Export YAML…", self.export_yaml)
         backup.addAction(QIcon.fromTheme("document-import"), "Restore from file…", self.restore_from_file)
@@ -508,8 +507,20 @@ class MainWindow(QMainWindow):
         self.recent = backup.addMenu(QIcon.fromTheme("document-open-recent"), "Recent versions")
         self.recent.aboutToShow.connect(self._fill_recent)
         bar.addWidget(self._menu_button("Backup", "folder-backup", backup))
-
         bar.addAction(QIcon.fromTheme("configure"), "Options", self.show_options)
+        bar.addSeparator()
+        bar.addAction(QIcon.fromTheme("view-refresh"), "Reload", self.reload)
+
+        self.save_button = QPushButton(QIcon.fromTheme("document-save"), "Save")
+        self.save_button.setToolTip("Save binding changes and reload InputActions (Ctrl+S)")
+        # Highlighted only when there's something to save; otherwise it's a plain, disabled button.
+        self.save_button.setStyleSheet(
+            "QPushButton { padding: 4px 16px; margin: 0 6px; }"
+            "QPushButton:enabled { background: palette(highlight); color: palette(highlighted-text); "
+            "font-weight: 600; border-radius: 4px; }")
+        self.save_button.clicked.connect(self.save)
+        bar.addWidget(self.save_button)
+        QShortcut(QKeySequence("Ctrl+S"), self, lambda: self.dirty and self.save())
         self._update_toggle()
 
     def _menu_button(self, text: str, icon: str, menu: QMenu) -> QToolButton:
@@ -581,11 +592,13 @@ class MainWindow(QMainWindow):
         state = ("<span style='color:#2e9e5b'>● Running</span>" if self.running
                  else "<span style='color:#c58a00'>● Stopped</span>" if self.loaded
                  else "<span style='color:#c58a00'>● Not loaded</span>")
-        tail = ("No issues" if not self._issues
-                else f"<span style='color:#d24545'>Config issues (hover)</span>")
-        self.status.setText(f"<b>InputActions</b> &nbsp; {state} &nbsp; · &nbsp; {tail}")
+        tail = ("" if not self._issues  # only worth showing when something's wrong
+                else " &nbsp; · &nbsp; <span style='color:#d24545'>⚠ Config issues (hover for details)</span>")
+        self.status.setText(f"<b>InputActions</b> &nbsp; {state}{tail}")
         self.status.setToolTip(self._issues)
-        self.save_action.setText("Save •" if self.dirty else "Save")
+        self.save_button.setEnabled(self.dirty)
+        self.save_button.setToolTip("Save binding changes and reload InputActions (Ctrl+S)" if self.dirty
+                                    else "Nothing to save")
         self.setWindowTitle(("* " if self.dirty else "") + "Actuator")
 
     def _check_issues(self):
