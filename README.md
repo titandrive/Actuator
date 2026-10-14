@@ -4,6 +4,8 @@ A desktop app for configuring [InputActions](https://wiki.inputactions.org/) on 
 buttons, touchpad and touchscreen gestures, and the per-app actions they trigger — without editing YAML
 by hand.
 
+![Actuator's main window: apps in the sidebar, Firefox's mouse bindings, and the binding editor](docs/screenshots/main.png)
+
 ## Features
 
 - **Per-app bindings.** Global bindings plus one page per app, organized into folders. Add apps from a
@@ -19,6 +21,12 @@ by hand.
 - **Copy and paste** bindings between apps, or copy an app's whole setup.
 - **YAML when you want it.** View or edit any binding as YAML, or the whole file with live validation
   (developer mode).
+
+## Screenshots
+
+| Touchpad gestures | Restore a saved version | Options |
+|---|---|---|
+| ![Touchpad gestures for Firefox, with the gesture editor](docs/screenshots/touchpad.png) | ![The Restore window listing saved versions and what restoring one would change](docs/screenshots/restore.png) | ![The Options window](docs/screenshots/options.png) |
 
 ## Requirements
 
