@@ -56,6 +56,24 @@ QT_KEYS = {
     Qt.Key.Key_Minus: "minus", Qt.Key.Key_Equal: "equal", Qt.Key.Key_Semicolon: "semicolon",
     Qt.Key.Key_Apostrophe: "apostrophe", Qt.Key.Key_QuoteLeft: "grave", Qt.Key.Key_Comma: "comma",
     Qt.Key.Key_Period: "dot", Qt.Key.Key_Slash: "slash", Qt.Key.Key_Backslash: "backslash",
+    Qt.Key.Key_CapsLock: "capslock", Qt.Key.Key_Print: "sysrq", Qt.Key.Key_Pause: "pause",
+    # With Shift held, Qt reports the shifted symbol; map it back to the physical key (US layout).
+    Qt.Key.Key_BraceLeft: "leftbrace", Qt.Key.Key_BraceRight: "rightbrace",
+    Qt.Key.Key_Underscore: "minus", Qt.Key.Key_Plus: "equal", Qt.Key.Key_Colon: "semicolon",
+    Qt.Key.Key_QuoteDbl: "apostrophe", Qt.Key.Key_AsciiTilde: "grave", Qt.Key.Key_Less: "comma",
+    Qt.Key.Key_Greater: "dot", Qt.Key.Key_Question: "slash", Qt.Key.Key_Bar: "backslash",
+    Qt.Key.Key_Exclam: "1", Qt.Key.Key_At: "2", Qt.Key.Key_NumberSign: "3", Qt.Key.Key_Dollar: "4",
+    Qt.Key.Key_Percent: "5", Qt.Key.Key_AsciiCircum: "6", Qt.Key.Key_Ampersand: "7",
+    Qt.Key.Key_Asterisk: "8", Qt.Key.Key_ParenLeft: "9", Qt.Key.Key_ParenRight: "0",
+    Qt.Key.Key_VolumeUp: "volumeup", Qt.Key.Key_VolumeDown: "volumedown", Qt.Key.Key_VolumeMute: "mute",
+    Qt.Key.Key_MediaPlay: "playpause", Qt.Key.Key_MediaTogglePlayPause: "playpause",
+    Qt.Key.Key_MediaNext: "nextsong", Qt.Key.Key_MediaPrevious: "previoussong",
+}
+# A modifier pressed and released on its own records as that key.
+LONE_MODIFIERS = {
+    Qt.Key.Key_Control: "leftctrl", Qt.Key.Key_Shift: "leftshift", Qt.Key.Key_Alt: "leftalt",
+    Qt.Key.Key_Meta: "leftmeta", Qt.Key.Key_Super_L: "leftmeta", Qt.Key.Key_Super_R: "rightmeta",
+    Qt.Key.Key_AltGr: "rightalt",
 }
 MODIFIER_KEYS = {Qt.Key.Key_Control, Qt.Key.Key_Shift, Qt.Key.Key_Alt, Qt.Key.Key_Meta,
                  Qt.Key.Key_Super_L, Qt.Key.Key_Super_R, Qt.Key.Key_AltGr}
@@ -95,4 +113,19 @@ MOUSE_BUTTONS = {
     Qt.MouseButton.BackButton: "back",
     Qt.MouseButton.ForwardButton: "forward",
     Qt.MouseButton.TaskButton: "task",
+}
+
+
+# What people can type, grouped for the key list. Each entry is the typed form.
+KEY_GROUPS = {
+    "Modifiers": ["Ctrl", "Shift", "Alt", "AltGr", "Meta"],
+    "Letters": [chr(c) for c in range(ord("A"), ord("Z") + 1)],
+    "Numbers": [str(n) for n in range(10)],
+    "Function keys": [f"F{n}" for n in range(1, 25)],
+    "Navigation": ["Up", "Down", "Left", "Right", "Home", "End", "PgUp", "PgDn"],
+    "Editing": ["Enter", "Tab", "Space", "Backspace", "Del", "Ins", "Esc", "CapsLock"],
+    "Symbols": ["-", "=", "[", "]", ";", "'", "`", ",", ".", "/", "\\"],
+    "Media": ["VolumeUp", "VolumeDown", "Mute", "PlayPause", "NextSong", "PreviousSong",
+              "BrightnessUp", "BrightnessDown"],
+    "Other": ["SysRq", "Pause", "ScrollLock", "Menu"],
 }

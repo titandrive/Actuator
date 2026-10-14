@@ -5,8 +5,9 @@ import re
 from PySide6.QtCore import Qt, Signal
 from PySide6.QtGui import QIcon
 from PySide6.QtWidgets import (
-    QCheckBox, QComboBox, QFormLayout, QGroupBox, QHBoxLayout, QLabel, QLineEdit,
-    QMessageBox, QPlainTextEdit, QPushButton, QSpinBox, QStackedWidget, QVBoxLayout, QWidget,
+    QCheckBox, QComboBox, QDialog, QDialogButtonBox, QFormLayout, QGroupBox, QHBoxLayout, QLabel, QLineEdit,
+    QMessageBox, QPlainTextEdit, QPushButton, QSpinBox, QStackedWidget, QTreeWidget,
+    QTreeWidgetItem, QVBoxLayout, QWidget,
 )
 from ruamel.yaml import YAML
 
@@ -151,6 +152,158 @@ def build_actions(mode: str, values: dict) -> list:
     raise ValueError(f"Unknown mode {mode}")
 
 
+class KeyField(QLineEdit):
+    """A text field that can also record key presses as combos."""
+
+    recorded = Signal()
+    focus_lost = Signal()
+
+    def __init__(self):
+        super().__init__()
+        self.recording = False
+        self.single = False  # record one combo, replacing the text, instead of appending
+        self._lone = None  # modifier pressed with nothing else yet
+
+    def start(self):
+        self.recording = True
+        self._first = True
+        self.setFocus()
+        self.setStyleSheet("QLineEdit { border: 2px solid #d24545; }")
+
+    def stop(self):
+        self.recording = False
+        self._lone = None
+        self.setStyleSheet("")
+
+    def _add(self, combo: str):
+        label = d.combo(combo)
+        if self.single or self._first or not self.text().strip():
+            self.setText(label)
+        else:
+            self.setText(f"{self.text().rstrip(', ')}, {label}")
+        self._first = False
+        self.recorded.emit()
+
+    def keyPressEvent(self, event):
+        if not self.recording:
+            return super().keyPressEvent(event)
+        if event.isAutoRepeat():
+            return
+        combo = keys.from_key_event(event)
+        if combo:
+            self._lone = None
+            self._add(combo)
+        else:
+            self._lone = keys.LONE_MODIFIERS.get(Qt.Key(event.key()))
+
+    def keyReleaseEvent(self, event):
+        if not self.recording:
+            return super().keyReleaseEvent(event)
+        if self._lone and keys.LONE_MODIFIERS.get(Qt.Key(event.key())) == self._lone:
+            self._add(self._lone)
+        self._lone = None
+
+    def focusOutEvent(self, event):
+        super().focusOutEvent(event)
+        if self.recording:
+            self.focus_lost.emit()
+
+
+class KeyList(QDialog):
+    """Every key name you can type. Click keys to build a combo, then Save."""
+
+    def __init__(self, field: "KeyField", parent=None):
+        super().__init__(parent)
+        self.field = field
+        self.setWindowTitle("Keys")
+        self.preview = QLineEdit(field.text())
+        self.preview.setPlaceholderText("Click keys below")
+        self.search = QLineEdit(placeholderText="Search keys")
+        self.search.textChanged.connect(self._filter)
+        self.tree = QTreeWidget()
+        self.tree.setHeaderLabels(["Key", "Name in config"])
+        for group, names in keys.KEY_GROUPS.items():
+            top = QTreeWidgetItem([group])
+            top.setFlags(Qt.ItemFlag.ItemIsEnabled)
+            for name in names:
+                try:
+                    raw = keys.to_name(name)
+                except ValueError:
+                    raw = name.lower()
+                top.addChild(QTreeWidgetItem([name, raw]))
+            self.tree.addTopLevelItem(top)
+            top.setExpanded(True)
+        self.tree.resizeColumnToContents(0)
+        self.tree.itemClicked.connect(self._insert)
+        self.then_button = QPushButton("Then…")
+        self.then_button.setToolTip("Start the next combo in a sequence, like Ctrl+C, then Ctrl+V")
+        self.then_button.clicked.connect(self._then)
+        self.then_button.setVisible(not field.single)
+        clear = QPushButton("Clear")
+        clear.clicked.connect(self.preview.clear)
+        tools = QHBoxLayout()
+        tools.addWidget(self.then_button)
+        tools.addWidget(clear)
+        tools.addStretch(1)
+        hint = QLabel("Click keys to build a combo: Ctrl, then T makes Ctrl+T."
+                      + ("" if field.single else " Use Then… to add another combo after it."))
+        hint.setWordWrap(True)
+        hint.setStyleSheet("color: palette(placeholder-text);")
+        self.error = QLabel()
+        self.error.setStyleSheet("color: #d24545;")
+        buttons = QDialogButtonBox(QDialogButtonBox.StandardButton.Save | QDialogButtonBox.StandardButton.Cancel)
+        buttons.accepted.connect(self._save)
+        buttons.rejected.connect(self.reject)
+        layout = QVBoxLayout(self)
+        layout.addWidget(self.preview)
+        layout.addLayout(tools)
+        layout.addWidget(self.search)
+        layout.addWidget(self.tree)
+        layout.addWidget(hint)
+        layout.addWidget(self.error)
+        layout.addWidget(buttons)
+        self.resize(360, 560)
+
+    def _filter(self, text: str):
+        text = text.lower()
+        for i in range(self.tree.topLevelItemCount()):
+            top = self.tree.topLevelItem(i)
+            shown = 0
+            for j in range(top.childCount()):
+                child = top.child(j)
+                match = not text or text in child.text(0).lower() or text in child.text(1)
+                child.setHidden(not match)
+                shown += match
+            top.setHidden(shown == 0)
+
+    def _then(self):
+        if self.preview.text().strip():
+            self.preview.setText(self.preview.text().rstrip(", ") + ", ")
+
+    def _insert(self, item, _col):
+        if item.childCount() or not (item.flags() & Qt.ItemFlag.ItemIsSelectable):
+            return
+        name, text = item.text(0), self.preview.text()
+        if not text.strip():
+            text = name
+        elif text.endswith(", "):
+            text += name
+        else:
+            text += f"+{name}"
+        self.preview.setText(text)
+
+    def _save(self):
+        text = self.preview.text().strip().rstrip(",")
+        try:
+            keys.parse_sequence(text)
+        except ValueError as e:
+            self.error.setText(str(e))
+            return
+        self.field.setText(text)
+        self.field.recorded.emit()
+        self.accept()
+
+
 def load_yaml(text: str):
     return YAML(typ="safe").load(text)
 
@@ -221,7 +374,20 @@ class BindingEditor(QWidget):
         for value, label in TAP_STAGES:
             self.stage.addItem(label, value)
         self.stage.currentIndexChanged.connect(self._do_edited)
-        self.value = QLineEdit()
+        self.value = KeyField()
+        self.value.recorded.connect(self._do_edited)
+        self.record = QPushButton(QIcon.fromTheme("media-record"), "Record")
+        self.record.setCheckable(True)
+        self.record.toggled.connect(self._record_toggled)
+        self.value.focus_lost.connect(lambda: self.record.setChecked(False))
+        value_row = QWidget()
+        vr = QHBoxLayout(value_row)
+        vr.setContentsMargins(0, 0, 0, 0)
+        vr.addWidget(self.value, 1)
+        vr.addWidget(self.record)
+        self.key_list_button = QPushButton(QIcon.fromTheme("input-keyboard"), "Keys…")
+        self.key_list_button.clicked.connect(self._show_key_list)
+        vr.addWidget(self.key_list_button)
         # Apply while typing, so nothing is lost if Save is clicked straight after.
         # Errors only show once the field is left, not on every half-typed key.
         self.value.textEdited.connect(lambda _t: self._do_edited(quiet=True))
@@ -238,7 +404,7 @@ class BindingEditor(QWidget):
         simple_form = QFormLayout(self.simple)
         simple_form.setContentsMargins(0, 0, 0, 0)
         simple_form.addRow("When", self.stage)
-        simple_form.addRow("Value", self.value)
+        simple_form.addRow("Value", value_row)
         simple_form.addRow("", self.value_hint)
         self.custom = QWidget()
         custom_layout = QVBoxLayout(self.custom)
@@ -337,14 +503,18 @@ class BindingEditor(QWidget):
         self.simple.layout().labelForField(self.stage).setVisible(mode != "Hold keys")
         idx = self.stage.findData(values.get("on", default_stage(self.binding.type)))
         self.stage.setCurrentIndex(max(idx, 0))
+        self.record.setChecked(False)
+        self.record.setVisible(mode in ("Press keys", "Hold keys"))
+        self.key_list_button.setVisible(mode in ("Press keys", "Hold keys"))
+        self.value.single = mode == "Hold keys"
         self.value.setText(values.get("keys", values.get("value", "")))
         self.value.setPlaceholderText({
             "Press keys": "Ctrl+W", "Hold keys": "F", "Run command": "konsole",
             "Plasma shortcut": "kwin,Overview",
         }[mode])
         self.value_hint.setText({
-            "Press keys": "Key combos, separated by commas for a sequence: Ctrl+C, Ctrl+V",
-            "Hold keys": "Held down while the trigger is active, released when it ends.",
+            "Press keys": "Click Record and press the keys, or type them: Ctrl+C, Ctrl+V",
+            "Hold keys": "Held while the trigger is active. Click Record and press them, or type them.",
             "Run command": "Runs in the background.",
             "Plasma shortcut": "Component and shortcut name, as in System Settings → Shortcuts.",
         }[mode])
@@ -373,6 +543,29 @@ class BindingEditor(QWidget):
         else:
             g["block_events"] = False
         self._commit()
+
+    def _show_key_list(self):
+        self.record.setChecked(False)
+        KeyList(self.value, self).exec()
+
+    def _record_toggled(self, on: bool):
+        if on:
+            self.value.start()
+            self.record.setText("Stop")
+            self.value_hint.setText("Recording. Press keys, then click Stop. "
+                                    "Some system shortcuts (like Meta+W) may be taken by Plasma; type those.")
+        else:
+            self.value.stop()
+            self.record.setText("Record")
+            self._fill_hint()
+
+    def _fill_hint(self):
+        self.value_hint.setText({
+            "Press keys": "Click Record and press the keys, or type them: Ctrl+C, Ctrl+V",
+            "Hold keys": "Held while the trigger is active. Click Record and press them, or type them.",
+            "Run command": "Runs in the background.",
+            "Plasma shortcut": "Component and shortcut name, as in System Settings → Shortcuts.",
+        }.get(self.mode.currentText(), ""))
 
     def _mode_changed(self, mode: str):
         if self._loading or not self.binding:
