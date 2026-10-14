@@ -27,6 +27,7 @@ DEVICES = {
 BUTTON_LINE = re.compile(r"^\s*#\s*actuator:button\s+(\S+)\s*=\s*(.+?)\s*$")
 APP_LINE = re.compile(r"^\s*#\s*actuator:app\s+(\S+)\s*$")
 DEVICE_LINE = re.compile(r"^\s*#\s*actuator:device\s+(.+?)\s*=\s*(\w+)\s*$")
+FOLDER_ICON_LINE = re.compile(r"^\s*#\s*actuator:foldericon\s+(.+?)\s*=\s*([a-z0-9-]+)\s*$")
 FOLDER_LINE = re.compile(r"^\s*#\s*actuator:folder\s+(.+?)\s*=\s*(.*?)\s*$")
 WINDOW_CLASS = re.compile(r"^\$window_class\s*(==|matches)\s*(.+)$")
 
@@ -65,6 +66,7 @@ class Config:
     button_names: dict[str, str] = field(default_factory=dict)  # src -> user's name
     extra_apps: set[str] = field(default_factory=set)  # apps kept without bindings
     folders: dict[str, list[str]] = field(default_factory=dict)  # folder name -> apps, in order
+    folder_icons: dict[str, str] = field(default_factory=dict)  # folder name -> Lucide icon name
     device_types: dict[str, str] = field(default_factory=dict)  # named device -> mouse/touchpad/...
 
     @property
@@ -116,6 +118,18 @@ class Config:
 
     def rename_folder(self, old: str, new: str):
         self.folders = {new if f == old else f: apps for f, apps in self.folders.items()}
+        if old in self.folder_icons:
+            self.folder_icons[new] = self.folder_icons.pop(old)
+
+    def delete_folder(self, name: str):
+        self.folders.pop(name, None)
+        self.folder_icons.pop(name, None)
+
+    def set_folder_icon(self, name: str, icon: str | None):
+        if icon:
+            self.folder_icons[name] = icon
+        else:
+            self.folder_icons.pop(name, None)
 
     def remove_app(self, app: str):
         self.extra_apps.discard(app)
@@ -225,6 +239,8 @@ def loads(text: str, path: Path | None = None) -> Config:
             config.extra_apps.add(m.group(1))
         elif m := DEVICE_LINE.match(line):
             config.device_types[m.group(1)] = m.group(2)
+        elif m := FOLDER_ICON_LINE.match(line):
+            config.folder_icons[m.group(1)] = m.group(2)
         elif m := FOLDER_LINE.match(line):
             config.folders[m.group(1)] = [a.strip() for a in m.group(2).split(",") if a.strip()]
     config.reindex()

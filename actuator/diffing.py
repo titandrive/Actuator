@@ -112,6 +112,10 @@ def changes(current: cfg.Config, other: cfg.Config) -> dict[str, list[tuple[str,
 
     def named(c):  # only names someone chose; the rest are just the raw input, written for bookkeeping
         return {k: v for k, v in c.button_names.items() if v != d.button_label(k)}
+    for f in sorted(set(current.folder_icons) | set(other.folder_icons)):
+        x, y = current.folder_icons.get(f), other.folder_icons.get(f)
+        if x != y and f in other.folders:
+            groups.setdefault("Other", []).append(("~", f"Icon of {f}", x or "folder", y or "folder"))
     if current.folders != other.folders:
         groups.setdefault("Other", []).append(
             ("~", "Folders", ", ".join(current.folders) or "none", ", ".join(other.folders) or "none"))

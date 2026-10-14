@@ -21,7 +21,7 @@ actuator = "actuator.__main__:main"
 packages = ["actuator"]
 
 [tool.setuptools.package-data]
-actuator = ["icons/*.svg", "icons/LICENSE"]
+actuator = ["icons/*.svg", "icons/tags.json", "icons/LICENSE"]
 
 [tool.setuptools.dynamic]
 version = { attr = "actuator.__version__" }

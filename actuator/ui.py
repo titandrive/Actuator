@@ -23,6 +23,7 @@ from PySide6.QtWidgets import (
 from PySide6.QtSvg import QSvgRenderer
 from ruamel.yaml import YAML
 
+from . import iconpicker
 from . import icons
 from . import REPO_URL, __version__
 from . import apps as apps_mod
@@ -1560,7 +1561,8 @@ class MainWindow(QMainWindow):
             for app in shown:
                 items[("app", app)] = entry(apps_mod.display_name(app), apps_mod.icon_name(app), ("app", app), f)
             f.setExpanded(folder not in collapsed)
-            f.setIcon(0, icons.icon("folder-open" if f.isExpanded() else "folder"))
+            custom = self.config.folder_icons.get(folder)
+            f.setIcon(0, icons.lucide(custom) if custom else icons.icon("folder-open" if f.isExpanded() else "folder"))
         for app in apps:
             if not self.config.folder_of(app):
                 items[("app", app)] = entry(apps_mod.display_name(app), apps_mod.icon_name(app), ("app", app))
@@ -1571,7 +1573,8 @@ class MainWindow(QMainWindow):
         p = item.data(0, ROLE)
         if not (isinstance(p, tuple) and p[0] == "folder"):
             return
-        item.setIcon(0, icons.icon("folder-open" if expanded else "folder"))
+        if not self.config.folder_icons.get(p[1]):  # a chosen icon stays the same open or closed
+            item.setIcon(0, icons.icon("folder-open" if expanded else "folder"))
         collapsed = set(self.settings.value("sidebar/collapsed", [], type=list) or [])
         (collapsed.discard if expanded else collapsed.add)(p[1])
         self.settings.setValue("sidebar/collapsed", sorted(collapsed))
@@ -1619,6 +1622,7 @@ class MainWindow(QMainWindow):
         elif isinstance(payload, tuple) and payload[0] == "folder":
             folder = payload[1]
             menu.addAction(icons.icon("edit-rename"), "Rename…", lambda: self.rename_folder(folder))
+            menu.addAction(icons.lucide("smile"), "Change icon…", lambda: self.change_folder_icon(folder))
             menu.addAction(icons.icon("edit-delete"), "Delete folder", lambda: self.delete_folder(folder))
         else:
             menu.addAction(icons.icon("list-add"), "Add app…", self.add_app)
@@ -1675,7 +1679,12 @@ class MainWindow(QMainWindow):
             )
             if answer != QMessageBox.StandardButton.Yes:
                 return
-        if self.apply_now(lambda c: c.folders.pop(folder, None)):
+        if self.apply_now(lambda c: c.delete_folder(folder)):
+            self._fill_sidebar()
+
+    def change_folder_icon(self, folder: str):
+        picker = iconpicker.IconPicker(self, self.config.folder_icons.get(folder), f"Icon for {folder}")
+        if picker.exec() and self.apply_now(lambda c: c.set_folder_icon(folder, picker.chosen)):
             self._fill_sidebar()
 
     def add_app(self):
