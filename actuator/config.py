@@ -22,6 +22,7 @@ DEVICES = {
 #   # actuator:button leftshift+leftmeta+leftbrace = Wheel tilt left
 BUTTON_LINE = re.compile(r"^\s*#\s*actuator:button\s+(\S+)\s*=\s*(.+?)\s*$")
 APP_LINE = re.compile(r"^\s*#\s*actuator:app\s+(\S+)\s*$")
+FOLDER_LINE = re.compile(r"^\s*#\s*actuator:folder\s+(.+?)\s*=\s*(.*?)\s*$")
 WINDOW_CLASS = re.compile(r"^\$window_class\s*(==|matches)\s*(.+)$")
 
 
@@ -58,6 +59,7 @@ class Config:
     buttons: list[Button] = field(default_factory=list)
     button_names: dict[str, str] = field(default_factory=dict)  # src -> user's name
     extra_apps: set[str] = field(default_factory=set)  # apps kept without bindings
+    folders: dict[str, list[str]] = field(default_factory=dict)  # folder name -> apps, in order
 
     @property
     def apps(self) -> list[str]:
@@ -89,8 +91,22 @@ class Config:
     def add_app(self, app: str):
         self.extra_apps.add(app_key(app))
 
+    def folder_of(self, app: str) -> str | None:
+        return next((f for f, apps in self.folders.items() if app in apps), None)
+
+    def move_to_folder(self, app: str, folder: str | None):
+        for apps in self.folders.values():
+            if app in apps:
+                apps.remove(app)
+        if folder:
+            self.folders.setdefault(folder, []).append(app)
+
+    def rename_folder(self, old: str, new: str):
+        self.folders = {new if f == old else f: apps for f, apps in self.folders.items()}
+
     def remove_app(self, app: str):
         self.extra_apps.discard(app)
+        self.move_to_folder(app, None)
         self.remove_bindings(self.bindings_for("app", app))
 
     def add_binding(self, section: str, data: dict) -> Binding:
@@ -172,5 +188,7 @@ def load(path: Path | None = None) -> Config:
             config.button_names[m.group(1)] = m.group(2)
         elif m := APP_LINE.match(line):
             config.extra_apps.add(m.group(1))
+        elif m := FOLDER_LINE.match(line):
+            config.folders[m.group(1)] = [a.strip() for a in m.group(2).split(",") if a.strip()]
     config.reindex()
     return config

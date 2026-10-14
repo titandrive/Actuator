@@ -6,11 +6,11 @@ import subprocess
 from datetime import date, datetime
 from pathlib import Path
 
-from PySide6.QtCore import QFileSystemWatcher, QSettings, Qt, QTimer
+from PySide6.QtCore import QFileSystemWatcher, QSettings, Qt, QTimer, Signal
 from PySide6.QtGui import QAction, QIcon
 from PySide6.QtWidgets import (
-    QDialog, QDialogButtonBox, QFileDialog, QFrame, QGridLayout, QHBoxLayout,
-    QLabel, QLineEdit, QListWidget, QListWidgetItem, QMainWindow, QMenu,
+    QApplication, QDialog, QDialogButtonBox, QFileDialog, QFrame, QGridLayout, QHBoxLayout,
+    QCheckBox, QComboBox, QGroupBox, QInputDialog, QLabel, QLineEdit, QMainWindow, QMenu,
     QMessageBox, QPlainTextEdit, QPushButton, QScrollArea, QSizePolicy,
     QSplitter, QStackedWidget, QTabWidget, QToolBar, QToolButton, QTreeWidget,
     QTreeWidgetItem, QVBoxLayout, QWidget,
@@ -24,7 +24,6 @@ from . import writer
 from .editor import GESTURE_TYPES, BindingEditor, new_button_binding, new_gesture_binding
 
 ROLE = Qt.ItemDataRole.UserRole
-ADD_APP = "add-app"
 
 
 def run_ctl(*args: str) -> tuple[bool, str]:
@@ -33,6 +32,30 @@ def run_ctl(*args: str) -> tuple[bool, str]:
     except (OSError, subprocess.TimeoutExpired) as e:
         return False, str(e)
     return p.returncode == 0, (p.stdout + p.stderr).strip()
+
+
+def run(*cmd: str) -> tuple[bool, str]:
+    try:
+        p = subprocess.run(cmd, capture_output=True, text=True, timeout=5)
+    except (OSError, subprocess.TimeoutExpired) as e:
+        return False, str(e)
+    return p.returncode == 0, (p.stdout + p.stderr).strip()
+
+
+# InputActions on KDE is the KWin effect "kwin_gestures"; KWin loads it at login when enabled.
+PLUGIN_KEY = ("--file", "kwinrc", "--group", "Plugins", "--key", "kwin_gesturesEnabled")
+
+
+def starts_at_login() -> bool:
+    ok, out = run("kreadconfig6", *PLUGIN_KEY)
+    return ok and out.strip() == "true"
+
+
+def set_starts_at_login(on: bool) -> tuple[bool, str]:
+    ok, out = run("kwriteconfig6", *PLUGIN_KEY, "true" if on else "false")
+    if not ok:
+        return ok, out
+    return run("qdbus6", "org.kde.KWin", "/KWin", "reconfigure")  # apply now, not just next login
 
 
 def active_window_class() -> str | None:
@@ -62,9 +85,13 @@ def app_counts(c: cfg.Config) -> dict[str, int]:
 class AddAppDialog(QDialog):
     """Type a window class, or pick it from a window."""
 
-    def __init__(self, parent):
+    def __init__(self, parent, folders: list[str]):
         super().__init__(parent)
         self.setWindowTitle("Add app")
+        self.folder_box = QComboBox()
+        self.folder_box.addItem("No folder", None)
+        for f in folders:
+            self.folder_box.addItem(f, f)
         self.edit = QLineEdit(placeholderText="steam")
         self.pick = QPushButton(QIcon.fromTheme("crosshairs"), "Pick window")
         self.pick.clicked.connect(self._start_pick)
@@ -80,6 +107,11 @@ class AddAppDialog(QDialog):
         layout = QVBoxLayout(self)
         layout.addLayout(row)
         layout.addWidget(self.hint)
+        if folders:
+            frow = QHBoxLayout()
+            frow.addWidget(QLabel("Folder"))
+            frow.addWidget(self.folder_box, 1)
+            layout.addLayout(frow)
         layout.addWidget(buttons)
         self.resize(420, 0)
         self._left = 0
@@ -113,6 +145,93 @@ class AddAppDialog(QDialog):
 
     def value(self) -> str:
         return self.edit.text().strip()
+
+    def folder(self) -> str | None:
+        return self.folder_box.currentData()
+
+
+class SidebarTree(QTreeWidget):
+    """Sidebar that lets apps be dragged onto folders. Emits (app, folder or None)."""
+
+    app_dropped = Signal(str, object)
+
+    def __init__(self):
+        super().__init__()
+        self.setDragEnabled(True)
+        self.setAcceptDrops(True)
+        self.setDropIndicatorShown(True)
+        self.setDragDropMode(QTreeWidget.DragDropMode.InternalMove)
+
+    def _target_folder(self, pos):
+        """Folder under the cursor, or None to take the app out of its folder."""
+        item = self.itemAt(pos)
+        while item is not None:
+            p = item.data(0, ROLE)
+            if isinstance(p, tuple) and p[0] == "folder":
+                return p[1]
+            item = item.parent()
+        return None
+
+    def dragMoveEvent(self, event):
+        dragged = self.currentItem()
+        p = dragged.data(0, ROLE) if dragged else None
+        if isinstance(p, tuple) and p[0] == "app":
+            event.setDropAction(Qt.DropAction.MoveAction)
+            event.accept()
+        else:
+            event.ignore()
+
+    def dropEvent(self, event):
+        # Don't let Qt move items itself; the sidebar is rebuilt from the config.
+        dragged = self.currentItem()
+        p = dragged.data(0, ROLE) if dragged else None
+        event.setDropAction(Qt.DropAction.IgnoreAction)
+        event.accept()
+        if isinstance(p, tuple) and p[0] == "app":
+            self.app_dropped.emit(p[1], self._target_folder(event.position().toPoint()))
+
+
+class OptionsDialog(QDialog):
+    def __init__(self, parent, tabs: dict[str, bool], autostart: bool):
+        super().__init__(parent)
+        self.setWindowTitle("Options")
+        self.autostart = QCheckBox("Start InputActions when I log in")
+        self.autostart.setChecked(autostart)
+        note = QLabel("Same as its switch in System Settings → Desktop Effects. "
+                      "Turning it off also stops it now.")
+        note.setWordWrap(True)
+        note.setStyleSheet("color: palette(placeholder-text);")
+        ia = QGroupBox("InputActions")
+        il = QVBoxLayout(ia)
+        il.addWidget(self.autostart)
+        il.addWidget(note)
+        self.boxes = {}
+        group = QGroupBox("Show these tabs")
+        gl = QVBoxLayout(group)
+        for title, on in tabs.items():
+            box = QCheckBox(title)
+            box.setChecked(on)
+            box.toggled.connect(self._keep_one)
+            gl.addWidget(box)
+            self.boxes[title] = box
+        buttons = QDialogButtonBox(QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel)
+        buttons.accepted.connect(self.accept)
+        buttons.rejected.connect(self.reject)
+        layout = QVBoxLayout(self)
+        layout.addWidget(ia)
+        layout.addWidget(group)
+        layout.addStretch(1)
+        layout.addWidget(buttons)
+        self.resize(320, 0)
+
+    def _keep_one(self):
+        # At least one tab has to stay visible.
+        on = [b for b in self.boxes.values() if b.isChecked()]
+        for b in self.boxes.values():
+            b.setEnabled(not (len(on) == 1 and b in on))
+
+    def tabs(self) -> dict[str, bool]:
+        return {t: b.isChecked() for t, b in self.boxes.items()}
 
 
 class CaptureDialog(QDialog):
@@ -265,14 +384,33 @@ class MainWindow(QMainWindow):
         self._last_written: str | None = None
 
         self._build_toolbar()
-        self.sidebar = QListWidget()
-        self.sidebar.setMaximumWidth(200)
+        self.sidebar = SidebarTree()
+        self.sidebar.app_dropped.connect(self._app_dropped)
+        self.sidebar.setHeaderHidden(True)
+        self.sidebar.setRootIsDecorated(False)
+        self.sidebar.setIndentation(14)
+        self.sidebar.itemClicked.connect(self._sidebar_clicked)
+        self.sidebar.itemExpanded.connect(lambda i: self._folder_toggled(i, True))
+        self.sidebar.itemCollapsed.connect(lambda i: self._folder_toggled(i, False))
         self.sidebar.currentItemChanged.connect(self._sidebar_changed)
         self.sidebar.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
         self.sidebar.customContextMenuRequested.connect(self._sidebar_menu)
         self.pages = QStackedWidget()
+        side = QWidget()
+        side.setMaximumWidth(240)
+        sl = QVBoxLayout(side)
+        sl.setContentsMargins(0, 0, 0, 0)
+        sl.addWidget(self.sidebar)
+        add_row = QHBoxLayout()
+        add_app = QPushButton(QIcon.fromTheme("list-add"), "Add app")
+        add_app.clicked.connect(self.add_app)
+        new_folder = QPushButton(QIcon.fromTheme("folder-new"), "New folder")
+        new_folder.clicked.connect(lambda: self.new_folder())
+        add_row.addWidget(add_app)
+        add_row.addWidget(new_folder)
+        sl.addLayout(add_row)
         split = QSplitter()
-        split.addWidget(self.sidebar)
+        split.addWidget(side)
         split.addWidget(self.pages)
         split.setStretchFactor(1, 1)
         self.setCentralWidget(split)
@@ -309,9 +447,7 @@ class MainWindow(QMainWindow):
         self.recent.aboutToShow.connect(self._fill_recent)
         bar.addWidget(self._menu_button("Backup", "folder-backup", backup))
 
-        self.options = QMenu(self)
-        self.options.aboutToShow.connect(self._fill_options)
-        bar.addWidget(self._menu_button("Options", "configure", self.options))
+        bar.addAction(QIcon.fromTheme("configure"), "Options", self.show_options)
         self._update_toggle()
 
     def _menu_button(self, text: str, icon: str, menu: QMenu) -> QToolButton:
@@ -321,19 +457,21 @@ class MainWindow(QMainWindow):
         b.setMenu(menu)
         return b
 
-    def _fill_options(self):
-        self.options.clear()
-        self.options.addSection("Show tabs")
-        for title in cfg.DEVICES:
-            a = self.options.addAction(title)
-            a.setCheckable(True)
-            a.setChecked(self.tab_visible(title))
-            a.toggled.connect(lambda on, t=title: self.set_tab_visible(t, on))
-        self.options.addSeparator()
-        a = self.options.addAction("Reload InputActions after save")
-        a.setCheckable(True)
-        a.setChecked(self.reload_after_save())
-        a.toggled.connect(lambda on: self.settings.setValue("reload_after_save", on))
+    def show_options(self):
+        autostart = starts_at_login()
+        dialog = OptionsDialog(self, {t: self.tab_visible(t) for t in cfg.DEVICES}, autostart)
+        if dialog.exec() != QDialog.DialogCode.Accepted:
+            return
+        if dialog.autostart.isChecked() != autostart:
+            ok, out = set_starts_at_login(dialog.autostart.isChecked())
+            if not ok:
+                QMessageBox.warning(self, "Actuator", f"Couldn't change the InputActions setting.\n\n{out}")
+            else:
+                self.running = dialog.autostart.isChecked()
+                self._update_toggle()
+        for title, on in dialog.tabs().items():
+            self.settings.setValue(f"tabs/{title}", on)
+        self._show_scope(*self.current)
 
     def _fill_recent(self):
         self.recent.clear()
@@ -352,12 +490,6 @@ class MainWindow(QMainWindow):
     def tab_visible(self, title: str) -> bool:
         return self.settings.value(f"tabs/{title}", True, type=bool)
 
-    def set_tab_visible(self, title: str, on: bool):
-        self.settings.setValue(f"tabs/{title}", on)
-        self._show_scope(*self.current)
-
-    def reload_after_save(self) -> bool:
-        return self.settings.value("reload_after_save", True, type=bool)
 
     def _update_toggle(self):
         self.toggle_action.setText("Stop" if self.running else "Start")
@@ -482,8 +614,7 @@ class MainWindow(QMainWindow):
         self._after_write(previous)
 
     def _after_write(self, previous: Path | None):
-        if self.reload_after_save():
-            run_ctl("config", "reload")
+        run_ctl("config", "reload")
         self.load()
         if self._issues and previous:
             answer = QMessageBox.warning(
@@ -535,64 +666,163 @@ class MainWindow(QMainWindow):
     def _fill_sidebar(self, select=None):
         keep = self.current
         self._pending_select = select
+        collapsed = set(self.settings.value("sidebar/collapsed", [], type=list) or [])
         self.sidebar.blockSignals(True)
         self.sidebar.clear()
 
         def header(text):
-            item = QListWidgetItem(text)
+            item = QTreeWidgetItem([text])
             item.setFlags(Qt.ItemFlag.NoItemFlags)
-            self.sidebar.addItem(item)
+            font = item.font(0)
+            font.setPointSizeF(font.pointSizeF() * 0.9)
+            item.setFont(0, font)
+            self.sidebar.addTopLevelItem(item)
 
-        def entry(text, icon, payload):
-            item = QListWidgetItem(QIcon.fromTheme(icon, QIcon.fromTheme("application-x-executable")), text)
-            item.setData(ROLE, payload)
-            self.sidebar.addItem(item)
+        def entry(text, icon, payload, parent=None):
+            item = QTreeWidgetItem([text])
+            item.setIcon(0, QIcon.fromTheme(icon, QIcon.fromTheme("application-x-executable")))
+            item.setData(0, ROLE, payload)
+            flags = Qt.ItemFlag.ItemIsEnabled | Qt.ItemFlag.ItemIsSelectable
+            if isinstance(payload, tuple) and payload[0] == "app":
+                flags |= Qt.ItemFlag.ItemIsDragEnabled
+            item.setFlags(flags)
+            (parent.addChild if parent else self.sidebar.addTopLevelItem)(item)
             return item
 
-        header("Applies to")
         items = {("global", None): entry("Global", "globe", ("global", None))}
-        for app in self.config.apps:
-            items[("app", app)] = entry(app.capitalize(), app, ("app", app))
-        add = QListWidgetItem(QIcon.fromTheme("list-add"), "Add app…")
-        add.setData(ROLE, ADD_APP)
-        self.sidebar.addItem(add)
+        header("Apps")
+        apps = self.config.apps
+        for folder, members in self.config.folders.items():
+            shown = [a for a in members if a in apps]
+            f = entry(f"{folder}  ({len(shown)})", "folder", ("folder", folder))
+            f.setFlags(Qt.ItemFlag.ItemIsEnabled | Qt.ItemFlag.ItemIsDropEnabled)  # not a page
+            font = f.font(0)
+            font.setBold(True)
+            f.setFont(0, font)
+            for app in shown:
+                items[("app", app)] = entry(app.capitalize(), app, ("app", app), f)
+            f.setExpanded(folder not in collapsed)
+            f.setIcon(0, QIcon.fromTheme("folder-open" if f.isExpanded() else "folder"))
+        for app in apps:
+            if not self.config.folder_of(app):
+                items[("app", app)] = entry(app.capitalize(), app, ("app", app))
         header("Advanced")
         items[("custom", None)] = entry("Custom rules", "view-filter", ("custom", None))
         items[("devices", None)] = entry("Device settings", "configure", ("devices", None))
         self.sidebar.blockSignals(False)
         self.sidebar.setCurrentItem(items.get(keep, items[("global", None)]))
 
+    def _folder_toggled(self, item, expanded: bool):
+        p = item.data(0, ROLE)
+        if not (isinstance(p, tuple) and p[0] == "folder"):
+            return
+        item.setIcon(0, QIcon.fromTheme("folder-open" if expanded else "folder"))
+        collapsed = set(self.settings.value("sidebar/collapsed", [], type=list) or [])
+        (collapsed.discard if expanded else collapsed.add)(p[1])
+        self.settings.setValue("sidebar/collapsed", sorted(collapsed))
+
     def _sidebar_changed(self, item, prev):
         if not item:
             return
         select, self._pending_select = getattr(self, "_pending_select", None), None
-        payload = item.data(ROLE)
-        if payload == ADD_APP:
-            self.sidebar.blockSignals(True)
-            self.sidebar.setCurrentItem(prev)
-            self.sidebar.blockSignals(False)
-            QTimer.singleShot(0, self.add_app)
-        elif payload:
+        payload = item.data(0, ROLE)
+        if isinstance(payload, tuple) and payload[0] != "folder":
             self._show_scope(*payload, select=select)
+
+    def _app_dropped(self, app: str, folder):
+        if self.config.folder_of(app) != folder:
+            self.move_app(app, folder)
+
+    def _sidebar_clicked(self, item, _col):
+        p = item.data(0, ROLE)
+        if isinstance(p, tuple) and p[0] == "folder" and QApplication.mouseButtons() != Qt.MouseButton.RightButton:
+            item.setExpanded(not item.isExpanded())
 
     def _sidebar_menu(self, pos):
         item = self.sidebar.itemAt(pos)
-        payload = item.data(ROLE) if item else None
-        if not (isinstance(payload, tuple) and payload[0] == "app"):
-            return
+        payload = item.data(0, ROLE) if item else None
         menu = QMenu(self)
-        menu.addAction(QIcon.fromTheme("list-remove"), f"Remove {payload[1].capitalize()}…",
-                       lambda: self.remove_app(payload[1]))
-        menu.exec(self.sidebar.mapToGlobal(pos))
+        if isinstance(payload, tuple) and payload[0] == "app":
+            app = payload[1]
+            move = menu.addMenu(QIcon.fromTheme("folder"), "Move to folder")
+            current = self.config.folder_of(app)
+            for folder in self.config.folders:
+                a = move.addAction(folder, lambda f=folder: self.move_app(app, f))
+                a.setCheckable(True)
+                a.setChecked(folder == current)
+            if self.config.folders:
+                move.addSeparator()
+            move.addAction(QIcon.fromTheme("folder-new"), "New folder…", lambda: self.new_folder(app))
+            if current:
+                menu.addAction(f"Take out of {current}", lambda: self.move_app(app, None))
+            menu.addSeparator()
+            menu.addAction(QIcon.fromTheme("list-remove"), f"Remove {app.capitalize()}…",
+                           lambda: self.remove_app(app))
+        elif isinstance(payload, tuple) and payload[0] == "folder":
+            folder = payload[1]
+            menu.addAction(QIcon.fromTheme("edit-rename"), "Rename…", lambda: self.rename_folder(folder))
+            menu.addAction(QIcon.fromTheme("edit-delete"), "Delete folder", lambda: self.delete_folder(folder))
+        else:
+            menu.addAction(QIcon.fromTheme("list-add"), "Add app…", self.add_app)
+            menu.addAction(QIcon.fromTheme("folder-new"), "New folder…", lambda: self.new_folder())
+        menu.exec(self.sidebar.viewport().mapToGlobal(pos))
+
+    def _ask_folder_name(self, title: str, text: str = "") -> str | None:
+        name, ok = QInputDialog.getText(self, title, "Folder name:", text=text)
+        name = name.strip().replace("=", "-") if ok else ""
+        if not name:
+            return None
+        if name != text and name in self.config.folders:
+            QMessageBox.information(self, "Actuator", f"There's already a folder called {name}.")
+            return None
+        return name
+
+    def new_folder(self, app: str | None = None):
+        name = self._ask_folder_name("New folder")
+        if not name:
+            return
+        self.config.folders.setdefault(name, [])
+        if app:
+            self.config.move_to_folder(app, name)
+        self.mark_dirty()
+        self._fill_sidebar()
+
+    def move_app(self, app: str, folder: str | None):
+        self.config.move_to_folder(app, folder)
+        self.mark_dirty()
+        self._fill_sidebar()
+
+    def rename_folder(self, folder: str):
+        name = self._ask_folder_name("Rename folder", folder)
+        if name and name != folder:
+            self.config.rename_folder(folder, name)
+            self.mark_dirty()
+            self._fill_sidebar()
+
+    def delete_folder(self, folder: str):
+        n = len(self.config.folders.get(folder, []))
+        if n:
+            answer = QMessageBox.question(
+                self, "Actuator", f"Delete the {folder} folder? Its {n} app{'s' if n != 1 else ''} "
+                "stay, just outside the folder.",
+                QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.Cancel,
+            )
+            if answer != QMessageBox.StandardButton.Yes:
+                return
+        self.config.folders.pop(folder, None)
+        self.mark_dirty()
+        self._fill_sidebar()
 
     def add_app(self):
-        dialog = AddAppDialog(self)
+        dialog = AddAppDialog(self, list(self.config.folders))
         if dialog.exec() != QDialog.DialogCode.Accepted:
             return
         app = cfg.app_key(dialog.value())
         if app not in self.config.apps:
             self.config.add_app(app)
-            self.mark_dirty()
+        if dialog.folder():
+            self.config.move_to_folder(app, dialog.folder())
+        self.mark_dirty()
         self.current = ("app", app)
         self._fill_sidebar()
 

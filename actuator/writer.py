@@ -66,10 +66,11 @@ def render(config: cfg.Config) -> str:
 
     # Every known button is recorded, so detection never depends on guessing again.
     names = {b.src: b.name if b.name != b.src else d.button_label(b.src) for b in config.buttons}
-    if names or config.extra_apps:
-        out.append("# Button names and apps used by Actuator. Safe to edit.")
+    if names or config.extra_apps or config.folders:
+        out.append("# Button names, apps and folders used by Actuator. Safe to edit.")
         out += [f"# actuator:button {src} = {name}" for src, name in sorted(names.items())]
         out += [f"# actuator:app {app}" for app in sorted(config.extra_apps)]
+        out += [f"# actuator:folder {f} = {', '.join(apps)}" for f, apps in config.folders.items()]
         out.append("")
 
     data = d.plain(config.data)
