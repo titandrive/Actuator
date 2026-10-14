@@ -543,16 +543,15 @@ class MainWindow(QMainWindow):
         spacer.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Preferred)
         bar.addWidget(spacer)
 
-        # Right: the config — backups, options, then Reload and Save together, Save last.
+        # Right: options, backups, then Reload and Save together, Save last.
+        bar.addAction(QIcon.fromTheme("configure"), "Options", self.show_options)
         backup = QMenu(self)
-        backup.addAction(QIcon.fromTheme("document-export"), "Export YAML…", self.export_yaml)
-        backup.addAction(QIcon.fromTheme("document-import"), "Restore from file…", self.restore_from_file)
+        backup.addAction(QIcon.fromTheme("document-export"), "Export YAML", self.export_yaml)
+        backup.addAction(QIcon.fromTheme("document-import"), "Restore from file", self.restore_from_file)
         backup.addSeparator()
         self.recent = backup.addMenu(QIcon.fromTheme("document-open-recent"), "Recent versions")
         self.recent.aboutToShow.connect(self._fill_recent)
         bar.addWidget(self._menu_button("Backup", "folder-backup", backup))
-        bar.addAction(QIcon.fromTheme("configure"), "Options", self.show_options)
-        bar.addSeparator()
         bar.addAction(QIcon.fromTheme("view-refresh"), "Reload", self.reload)
 
         self.save_button = QPushButton(QIcon.fromTheme("document-save"), "Save")
