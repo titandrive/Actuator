@@ -7,12 +7,14 @@ import subprocess
 from datetime import date, datetime
 from pathlib import Path
 
-from PySide6.QtCore import QFileSystemWatcher, QPoint, QSettings, QSize, Qt, QTimer, QUrl, Signal
+from PySide6.QtCore import (
+    Property, QFileSystemWatcher, QPoint, QPropertyAnimation, QRectF, QSettings, QSize, Qt, QTimer, QUrl, Signal,
+)
 from PySide6.QtGui import (
     QColor, QDesktopServices, QFontDatabase, QIcon, QKeySequence, QPainter, QPixmap, QShortcut,
 )
 from PySide6.QtWidgets import (
-    QApplication, QDialog, QTextBrowser, QListWidget, QListWidgetItem, QToolTip, QFormLayout, QSpinBox, QDialogButtonBox, QFileDialog, QFrame, QGridLayout, QHBoxLayout,
+    QAbstractButton, QApplication, QDialog, QTextBrowser, QListWidget, QListWidgetItem, QToolTip, QFormLayout, QSpinBox, QDialogButtonBox, QFileDialog, QFrame, QGridLayout, QHBoxLayout,
     QCheckBox, QComboBox, QGroupBox, QInputDialog, QLabel, QLineEdit, QMainWindow, QMenu,
     QMessageBox, QPushButton, QScrollArea, QSizePolicy,
     QSplitter, QStackedWidget, QTabWidget, QToolBar, QToolButton, QTreeWidget,
@@ -338,89 +340,189 @@ def github_icon(color: QColor, size: int = 16) -> QPixmap:
     return pixmap
 
 
-def _heading(text: str) -> QLabel:
-    label = QLabel(text)
-    label.setStyleSheet("font-weight: 600; margin-top: 6px;")
-    return label
+class Toggle(QAbstractButton):
+    """A sliding on/off switch, drawn in the theme's accent color."""
+
+    def __init__(self, checked: bool = False, parent=None):
+        super().__init__(parent)
+        self.setCheckable(True)
+        self.setChecked(checked)
+        self.setCursor(Qt.CursorShape.PointingHandCursor)
+        self._pos = 1.0 if checked else 0.0
+        self._anim = QPropertyAnimation(self, b"knob", self)
+        self._anim.setDuration(120)
+        self.toggled.connect(self._animate)
+
+    def sizeHint(self):
+        return QSize(40, 22)
+
+    def _animate(self, on: bool):
+        self._anim.stop()
+        self._anim.setStartValue(self._pos)
+        self._anim.setEndValue(1.0 if on else 0.0)
+        self._anim.start()
+
+    def _get_knob(self) -> float:
+        return self._pos
+
+    def _set_knob(self, value: float):
+        self._pos = value
+        self.update()
+
+    knob = Property(float, _get_knob, _set_knob)
+
+    def paintEvent(self, _event):
+        p = QPainter(self)
+        p.setRenderHint(QPainter.RenderHint.Antialiasing)
+        r = self.rect().adjusted(1, 1, -1, -1)
+        on = self.palette().highlight().color()
+        off = self.palette().placeholderText().color()
+        track = QColor(on) if self.isChecked() else QColor(off)
+        if not self.isChecked():
+            track.setAlpha(110)
+        if not self.isEnabled():
+            track.setAlpha(60)
+        p.setPen(Qt.PenStyle.NoPen)
+        p.setBrush(track)
+        p.drawRoundedRect(r, r.height() / 2, r.height() / 2)
+        d = r.height() - 4
+        x = r.left() + 2 + self._pos * (r.width() - d - 4)
+        p.setBrush(QColor("#ffffff") if self.isEnabled() else QColor(220, 220, 220))
+        p.drawEllipse(QRectF(x, r.top() + 2, d, d))
+
+
+CARD_STYLE = ("QFrame#card { background: rgba(127, 127, 127, 0.07); "
+              "border: 1px solid rgba(127, 127, 127, 0.20); border-radius: 8px; }")
+
+
+class Card(QFrame):
+    """A rounded section of setting rows, separated by hairlines — like System Settings."""
+
+    def __init__(self, title: str):
+        super().__init__()
+        self.setObjectName("card")
+        self.setStyleSheet(CARD_STYLE)
+        self.title = QLabel(title)
+        self.title.setStyleSheet("font-weight: 600; padding: 2px 2px 0;")
+        self.body = QVBoxLayout(self)
+        self.body.setContentsMargins(14, 6, 14, 6)
+        self.body.setSpacing(0)
+
+    def add_row(self, title: str, subtitle: str, control: QWidget | None, extra: QWidget | None = None):
+        if self.body.count():
+            line = QFrame()
+            line.setFixedHeight(1)
+            line.setStyleSheet("background: rgba(127, 127, 127, 0.18); border: none;")
+            self.body.addWidget(line)
+        row = QWidget()
+        h = QHBoxLayout(row)
+        h.setContentsMargins(0, 9, 0, 9)
+        text = QVBoxLayout()
+        text.setSpacing(1)
+        name = QLabel(title)
+        text.addWidget(name)
+        if subtitle:
+            sub = QLabel(subtitle)
+            sub.setWordWrap(True)
+            sub.setStyleSheet("color: palette(placeholder-text); font-size: 9pt;")
+            text.addWidget(sub)
+        h.addLayout(text, 1)
+        if extra:
+            h.addWidget(extra)
+        if control:
+            h.addWidget(control, 0, Qt.AlignmentFlag.AlignVCenter)
+        self.body.addWidget(row)
+        return row
+
+    def add_widget(self, widget: QWidget):
+        self.body.addWidget(widget)
+
+
+def section(card: Card) -> QWidget:
+    """A card with its title above it."""
+    w = QWidget()
+    v = QVBoxLayout(w)
+    v.setContentsMargins(0, 0, 0, 0)
+    v.setSpacing(6)
+    v.addWidget(card.title)
+    v.addWidget(card)
+    return w
 
 
 class OptionsDialog(QDialog):
-    """Options, laid out like KDE's settings pages: small headings, aligned rows, no boxes."""
+    """Options, styled like the rest of the app: rounded cards of rows with switches."""
 
     def __init__(self, parent, tabs: dict[str, bool], autostart: bool, keep: int):
         super().__init__(parent)
         self.settings = parent.settings
         self._version_clicks = 0
         self.setWindowTitle("Options")
-        layout = QVBoxLayout(self)
-        layout.setSpacing(6)
-        layout.setContentsMargins(18, 14, 18, 14)
+        content = QWidget()
+        layout = QVBoxLayout(content)
+        layout.setContentsMargins(18, 16, 18, 8)
+        layout.setSpacing(16)
 
         # General
-        layout.addWidget(_heading("General"))
-        # Plain left-aligned rows, like the sections below (a form would push the checkbox right).
-        self.autostart = QCheckBox("Start InputActions when I log in")
-        self.autostart.setChecked(autostart)
+        general = Card("General")
+        self.autostart = Toggle(autostart)
         info = QToolButton(icon=QIcon.fromTheme("help-about-symbolic", QIcon.fromTheme("dialog-information")))
         info.setAutoRaise(True)
         info.setToolTip("How autostart works")
         info.clicked.connect(self._explain_autostart)
-        auto_row = QHBoxLayout()
-        auto_row.addWidget(self.autostart)
-        auto_row.addWidget(info)
-        auto_row.addStretch(1)
-        layout.addLayout(auto_row)
+        general.add_row("Start InputActions at login", "Loads it every time you log in to Plasma.",
+                        self.autostart, info)
         self.keep = QSpinBox(minimum=1, maximum=200)
         self.keep.setValue(keep)
-        keep_row = QHBoxLayout()
-        keep_label = QLabel("How many saves to keep:")
-        keep_label.setContentsMargins(3, 0, 0, 0)  # line up with the checkbox text above
-        keep_row.addWidget(keep_label)
-        keep_row.addWidget(self.keep)
-        keep_row.addStretch(1)
-        layout.addLayout(keep_row)
+        general.add_row("Saved versions to keep", "Older versions are deleted as new ones are saved.",
+                        self.keep)
+        layout.addWidget(section(general))
 
-        # Tabs, in two columns
-        layout.addWidget(_heading("Device tabs"))
-        grid = QGridLayout()
-        grid.setHorizontalSpacing(24)
+        # Device tabs
+        tab_card = Card("Device tabs")
         self.boxes = {}
-        for i, (title, on) in enumerate(tabs.items()):
-            box = QCheckBox(title)
-            box.setChecked(on)
-            box.toggled.connect(self._keep_one)
-            grid.addWidget(box, i // 2, i % 2)
-            self.boxes[title] = box
-        grid.setColumnStretch(2, 1)
-        layout.addLayout(grid)
+        hints = {"Mouse": "Mouse buttons and mouse gestures", "Touchpad": "Swipes, pinches, taps and more",
+                 "Keyboard": "Keyboard shortcuts", "Touchscreen": "Touchscreen gestures",
+                 "Pointer": "Hovering over screen areas"}
+        for title, on in tabs.items():
+            t = Toggle(on)
+            t.toggled.connect(self._keep_one)
+            tab_card.add_row(title, hints.get(title, ""), t)
+            self.boxes[title] = t
+        layout.addWidget(section(tab_card))
 
-        # Developer (only once turned on)
-        self.dev_box = QWidget()
-        self.dev_layout = QVBoxLayout(self.dev_box)
-        self.dev_layout.setContentsMargins(0, 0, 0, 0)
-        self.dev_layout.addWidget(_heading("Developer Options"))
+        # Developer Options (only once turned on)
+        dev = Card("Developer Options")
+        off = QPushButton("Turn off")
+        off.setFlat(True)
+        off.setToolTip("Turn off developer mode")
+        off.clicked.connect(lambda: self._set_dev_mode(False))
         self.features = {}
+        devices = QPushButton("Open…")
+        devices.clicked.connect(parent.open_device_settings)
         for key, label, note in DEV_FEATURES:
-            box = QCheckBox(label)
-            box.setChecked(self.settings.value(f"dev/{key}", False, type=bool))
-            box.setToolTip(note)
-            self.dev_layout.addWidget(box)
-            self.features[key] = box
-        # Git auto-commit settings, shown under its toggle.
+            t = Toggle(self.settings.value(f"dev/{key}", False, type=bool))
+            self.features[key] = t
+            dev.add_row(label.removeprefix("Enable "), note, t, devices if key == "device_settings" else None)
+        devices.setVisible(self.features["device_settings"].isChecked())
+        self.features["device_settings"].toggled.connect(devices.setVisible)
+
+        # Git details, under its switch
         self.git_box = QWidget()
         gl = QVBoxLayout(self.git_box)
-        gl.setContentsMargins(26, 0, 0, 4)
-        self.git_push = QCheckBox("Push after committing")
-        self.git_push.setChecked(self.settings.value("git/push", False, type=bool))
-        gl.addWidget(self.git_push)
-        # Setup checklist: what's ready, with a link to the instructions if something isn't.
+        gl.setContentsMargins(16, 0, 0, 10)
+        push_row = QHBoxLayout()
+        push_row.addWidget(QLabel("Push after committing"))
+        push_row.addStretch(1)
+        self.git_push = Toggle(self.settings.value("git/push", False, type=bool))
+        push_row.addWidget(self.git_push)
+        gl.addLayout(push_row)
         st = gitsync.status(cfg.CONFIG_PATH)
-        ok_mark = "<span style='color:#2e9e5b'>✓</span>"
-        bad_mark = "<span style='color:#d24545'>✗</span>"
-        warn_mark = "<span style='color:#c58a00'>⚠</span>"
+        ok_mark, bad_mark, warn_mark = ("<span style='color:#2e9e5b'>✓</span>",
+                                        "<span style='color:#d24545'>✗</span>",
+                                        "<span style='color:#c58a00'>⚠</span>")
         rows = [f"{ok_mark if st['git'] else bad_mark} Git is installed"]
         if st["git"]:
-            rows.append(f"{ok_mark} Config folder is a git repository: {html.escape(str(st['repo']))}"
+            rows.append(f"{ok_mark} Repository: {html.escape(str(st['repo']))}"
                         if st["repo"] else f"{bad_mark} The config folder isn't a git repository yet")
         if st["repo"]:
             rows.append(f"{ok_mark} Pushes to {html.escape(st['remote'])}" if st["remote"]
@@ -431,26 +533,28 @@ class OptionsDialog(QDialog):
         checklist.setWordWrap(True)
         checklist.setOpenExternalLinks(True)
         checklist.setTextFormat(Qt.TextFormat.RichText)
+        checklist.setStyleSheet("font-size: 9pt;")
         gl.addWidget(checklist)
+        dev.add_widget(self.git_box)
         git_toggle = self.features["git_autocommit"]
-        self.dev_layout.insertWidget(self.dev_layout.indexOf(git_toggle) + 1, self.git_box)
         self.git_box.setVisible(git_toggle.isChecked())
-        git_toggle.toggled.connect(lambda on: (self.git_box.setVisible(on), self.adjustSize()))
+        git_toggle.toggled.connect(self.git_box.setVisible)
 
-        dev_buttons = QHBoxLayout()
-        devices = QPushButton(QIcon.fromTheme("input-mouse"), "Device settings…")
-        devices.clicked.connect(parent.open_device_settings)
-        devices.setVisible(self.features["device_settings"].isChecked())
-        self.features["device_settings"].toggled.connect(devices.setVisible)
-        dev_off = QPushButton("Turn off developer mode")
-        dev_off.clicked.connect(lambda: self._set_dev_mode(False))
-        dev_buttons.addWidget(devices)
-        dev_buttons.addWidget(dev_off)
-        dev_buttons.addStretch(1)
-        self.dev_layout.addLayout(dev_buttons)
+        self.dev_box = section(dev)
+        title_row = QHBoxLayout()
+        title_row.setContentsMargins(0, 0, 0, 0)
+        self.dev_box.layout().removeWidget(dev.title)
+        title_row.addWidget(dev.title)
+        title_row.addStretch(1)
+        title_row.addWidget(off)
+        self.dev_box.layout().insertLayout(0, title_row)
         self.dev_box.setVisible(self.settings.value("dev_mode", False, type=bool))
         layout.addWidget(self.dev_box)
         layout.addStretch(1)
+
+        scroll = QScrollArea(widgetResizable=True, frameShape=QFrame.Shape.NoFrame)
+        scroll.setWidget(content)
+        scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
 
         buttons = QDialogButtonBox(QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel
                                    | QDialogButtonBox.StandardButton.RestoreDefaults)
@@ -459,20 +563,11 @@ class OptionsDialog(QDialog):
         reset = buttons.button(QDialogButtonBox.StandardButton.RestoreDefaults)
         reset.setText("Reset to defaults")
         reset.clicked.connect(self._reset_defaults)
-        layout.addSpacing(8)
-        layout.addWidget(buttons)
-        # Start with focus on OK; otherwise the first checkbox gets it, and some themes underline it.
         ok = buttons.button(QDialogButtonBox.StandardButton.Ok)
         ok.setDefault(True)
         QTimer.singleShot(0, ok.setFocus)
 
-        # Footer, centered: GitHub link, then the version. Clicking the version ten
-        # times turns on developer mode.
-        line = QFrame()
-        line.setFrameShape(QFrame.Shape.HLine)
-        line.setStyleSheet("color: palette(mid);")
-        layout.addSpacing(6)
-        layout.addWidget(line)
+        # Footer, centered: GitHub link, then the version (click it ten times for developer mode).
         logo = QLabel()
         logo.setPixmap(github_icon(self.palette().text().color()))
         links = QLabel(f"<a href='{REPO_URL}'>GitHub</a>")
@@ -482,14 +577,23 @@ class OptionsDialog(QDialog):
         link_row.addWidget(logo)
         link_row.addWidget(links)
         link_row.addStretch(1)
-        layout.addLayout(link_row)
         self.version = QLabel(f"Version {__version__}")
         self.version.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self.version.setStyleSheet("color: palette(placeholder-text);")
         self.version.mousePressEvent = self._version_clicked
-        layout.addWidget(self.version)
-        self.setMinimumWidth(420)
-        self.resize(420, 0)
+
+        outer = QVBoxLayout(self)
+        outer.setContentsMargins(0, 0, 0, 12)
+        outer.addWidget(scroll, 1)
+        bottom = QVBoxLayout()
+        bottom.setContentsMargins(18, 4, 18, 0)
+        bottom.addWidget(buttons)
+        bottom.addSpacing(8)
+        bottom.addLayout(link_row)
+        bottom.addWidget(self.version)
+        outer.addLayout(bottom)
+        self.setMinimumWidth(560)
+        self.resize(640, 720)
 
     def _reset_defaults(self):
         """Back to how Actuator starts out. Applied on OK, like any other change here."""
@@ -523,7 +627,6 @@ class OptionsDialog(QDialog):
         self.settings.setValue("dev_mode", on)
         self._version_clicks = 0
         self.dev_box.setVisible(on)
-        self.adjustSize()
 
     def _explain_autostart(self):
         box = QMessageBox(self)
@@ -853,16 +956,16 @@ class MainWindow(QMainWindow):
         bar.addSeparator()
 
         menu = QMenu(self)
-        menu.addAction(QIcon.fromTheme("configure"), "Options…", self.show_options)
-        self.yaml_action = menu.addAction(QIcon.fromTheme("text-x-script"), "Edit YAML…", self.open_yaml_editor)
+        menu.addAction(QIcon.fromTheme("configure"), "Options", self.show_options)
+        self.yaml_action = menu.addAction(QIcon.fromTheme("text-x-script"), "Edit YAML", self.open_yaml_editor)
         menu.addSeparator()
-        menu.addAction(QIcon.fromTheme("document-export"), "Export YAML…", self.export_yaml)
-        menu.addAction(QIcon.fromTheme("document-revert"), "Restore…", self.open_versions)
+        menu.addAction(QIcon.fromTheme("document-export"), "Export YAML", self.export_yaml)
+        menu.addAction(QIcon.fromTheme("document-revert"), "Restore", self.open_versions)
         hamburger = QToolButton(icon=QIcon.fromTheme("application-menu", QIcon.fromTheme("open-menu-symbolic")))
         hamburger.setToolTip("Menu")
-        hamburger.setPopupMode(QToolButton.ToolButtonPopupMode.InstantPopup)
-        hamburger.setMenu(menu)
-        hamburger.setStyleSheet("QToolButton::menu-indicator { image: none; }")
+        # Open the menu by hand: attaching it to the button would reserve room for a dropdown
+        # arrow and push the icon off-center.
+        hamburger.clicked.connect(lambda: menu.exec(hamburger.mapToGlobal(hamburger.rect().bottomLeft())))
         bar.addWidget(hamburger)
 
         self.save_button = QPushButton(QIcon.fromTheme("document-save"), "Save")
