@@ -21,6 +21,7 @@ from . import config as cfg
 from . import describe as d
 from . import keys
 from . import writer
+from .devices import DeviceSettingsPage
 from .editor import GESTURE_TYPES, BindingEditor, new_button_binding, new_gesture_binding
 
 ROLE = Qt.ItemDataRole.UserRole
@@ -1087,25 +1088,6 @@ class MainWindow(QMainWindow):
         return page
 
     def _device_settings_page(self) -> QWidget:
-        tree = QTreeWidget()
-        tree.setHeaderLabels(["Setting", "Value"])
-        for rule in self.config.device_rules:
-            conds = d.conditions(rule.get("conditions")) or ["All devices"]
-            top = QTreeWidgetItem([" and ".join(c.lstrip("$") for c in conds)])
-            tree.addTopLevelItem(top)
-
-            def add(parent, node, prefix=""):
-                for k, v in node.items():
-                    if k == "conditions":
-                        continue
-                    if isinstance(v, dict):
-                        add(parent, v, f"{prefix}{k} ")
-                    else:
-                        parent.addChild(QTreeWidgetItem([f"{prefix}{k}".replace("_", " "), str(v)]))
-
-            add(top, rule)
-            top.setExpanded(True)
-        if not self.config.device_rules:
-            tree.addTopLevelItem(QTreeWidgetItem(["No device rules. Everything uses defaults."]))
-        tree.resizeColumnToContents(0)
-        return tree
+        page = DeviceSettingsPage(self.config)
+        page.changed.connect(self.mark_dirty)
+        return page

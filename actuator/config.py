@@ -22,6 +22,7 @@ DEVICES = {
 #   # actuator:button leftshift+leftmeta+leftbrace = Wheel tilt left
 BUTTON_LINE = re.compile(r"^\s*#\s*actuator:button\s+(\S+)\s*=\s*(.+?)\s*$")
 APP_LINE = re.compile(r"^\s*#\s*actuator:app\s+(\S+)\s*$")
+DEVICE_LINE = re.compile(r"^\s*#\s*actuator:device\s+(.+?)\s*=\s*(\w+)\s*$")
 FOLDER_LINE = re.compile(r"^\s*#\s*actuator:folder\s+(.+?)\s*=\s*(.*?)\s*$")
 WINDOW_CLASS = re.compile(r"^\$window_class\s*(==|matches)\s*(.+)$")
 
@@ -60,6 +61,7 @@ class Config:
     button_names: dict[str, str] = field(default_factory=dict)  # src -> user's name
     extra_apps: set[str] = field(default_factory=set)  # apps kept without bindings
     folders: dict[str, list[str]] = field(default_factory=dict)  # folder name -> apps, in order
+    device_types: dict[str, str] = field(default_factory=dict)  # named device -> mouse/touchpad/...
 
     @property
     def apps(self) -> list[str]:
@@ -188,6 +190,8 @@ def load(path: Path | None = None) -> Config:
             config.button_names[m.group(1)] = m.group(2)
         elif m := APP_LINE.match(line):
             config.extra_apps.add(m.group(1))
+        elif m := DEVICE_LINE.match(line):
+            config.device_types[m.group(1)] = m.group(2)
         elif m := FOLDER_LINE.match(line):
             config.folders[m.group(1)] = [a.strip() for a in m.group(2).split(",") if a.strip()]
     config.reindex()
