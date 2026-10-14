@@ -487,6 +487,10 @@ class MainWindow(QMainWindow):
 
         self._build_toolbar()
         self.sidebar = SidebarTree()
+        self.sidebar.setColumnCount(2)  # name, binding count
+        self.sidebar.header().setStretchLastSection(False)
+        self.sidebar.header().setSectionResizeMode(0, self.sidebar.header().ResizeMode.Stretch)
+        self.sidebar.header().setSectionResizeMode(1, self.sidebar.header().ResizeMode.ResizeToContents)
         self.sidebar.app_dropped.connect(self._app_dropped)
         self.sidebar.setHeaderHidden(True)
         self.sidebar.setRootIsDecorated(False)
@@ -854,8 +858,16 @@ class MainWindow(QMainWindow):
             item.setFont(0, font)
             self.sidebar.addTopLevelItem(item)
 
+        def count(payload) -> str:
+            if not (isinstance(payload, tuple) and payload[0] in ("global", "app")):
+                return ""
+            return str(len(self._bindings(*payload)))
+
         def entry(text, icon, payload, parent=None):
-            item = QTreeWidgetItem([text])
+            item = QTreeWidgetItem([text, count(payload)])
+            item.setForeground(1, self.palette().placeholderText())
+            item.setTextAlignment(1, Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
+            item.setToolTip(1, "Bindings")
             item.setIcon(0, QIcon.fromTheme(icon, QIcon.fromTheme("application-x-executable")))
             item.setData(0, ROLE, payload)
             flags = Qt.ItemFlag.ItemIsEnabled | Qt.ItemFlag.ItemIsSelectable
@@ -1043,11 +1055,12 @@ class MainWindow(QMainWindow):
             if self.tab_visible(title):
                 page = self._mouse_page(scope, app, select) if section == "mouse" else \
                     self._gesture_page(scope, app, section, select)
-                tabs.addTab(page, title)
+                i = tabs.addTab(page, f"{title} ({len(list(page.rows()))})")
+                tabs.tabBar().setTabData(i, title)
         # Stay on the same device tab when switching apps, and across restarts.
         last_tab = self.settings.value("last/tab", "Mouse", type=str)
-        tabs.setCurrentIndex(next((i for i in range(tabs.count()) if tabs.tabText(i) == last_tab), 0))
-        tabs.currentChanged.connect(lambda i: self.settings.setValue("last/tab", tabs.tabText(i)))
+        tabs.setCurrentIndex(next((i for i in range(tabs.count()) if tabs.tabBar().tabData(i) == last_tab), 0))
+        tabs.currentChanged.connect(lambda i: self.settings.setValue("last/tab", tabs.tabBar().tabData(i)))
         self._set_page(tabs)
 
     def _refresh(self, select=None):
