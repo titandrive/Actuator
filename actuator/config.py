@@ -91,8 +91,26 @@ class Config:
 
     def remove_app(self, app: str):
         self.extra_apps.discard(app)
-        for b in self.bindings_for("app", app):
-            self.data[b.section]["gestures"].remove(b.data)
+        self.remove_bindings(self.bindings_for("app", app))
+
+    def add_binding(self, section: str, data: dict) -> Binding:
+        body = self.data.get(section)
+        if not isinstance(body, dict):
+            body = self.data[section] = {}
+        if not isinstance(body.get("gestures"), list):
+            body["gestures"] = []
+        body["gestures"].append(data)
+        self.reindex()
+        return next(b for b in self.bindings if b.data is data)
+
+    def remove_bindings(self, bindings: list[Binding]):
+        # By position, highest first, so equal-looking bindings can't be confused.
+        for b in sorted(bindings, key=lambda b: (b.section, b.index), reverse=True):
+            del self.data[b.section]["gestures"][b.index]
+        self.reindex()
+
+    def add_button(self, src: str, name: str):
+        self.button_names[src] = name
         self.reindex()
 
     def reindex(self):

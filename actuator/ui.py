@@ -19,7 +19,9 @@ from ruamel.yaml import YAML
 
 from . import config as cfg
 from . import describe as d
+from . import keys
 from . import writer
+from .editor import GESTURE_TYPES, BindingEditor, new_button_binding, new_gesture_binding
 
 ROLE = Qt.ItemDataRole.UserRole
 ADD_APP = "add-app"
@@ -113,80 +115,103 @@ class AddAppDialog(QDialog):
         return self.edit.text().strip()
 
 
-class BindingView(QWidget):
-    """When / Only if / Do summary of one binding, with its raw YAML on demand."""
+class CaptureDialog(QDialog):
+    """Press a mouse button, or the key combo a mouse button sends, to add it."""
 
-    def __init__(self):
-        super().__init__()
-        self.title = QLabel()
-        self.title.setStyleSheet("font-weight: 600;")
-        self.yaml_button = QPushButton(QIcon.fromTheme("text-x-script"), "YAML")
-        self.yaml_button.setCheckable(True)
-        self.yaml_button.toggled.connect(lambda on: self.yaml.setVisible(on))
-        self.when, self.only_if, self.do = QLabel(), QLabel(), QLabel()
-        for label in (self.when, self.only_if, self.do):
-            label.setWordWrap(True)
-            label.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
-        self.yaml = QPlainTextEdit(readOnly=True)
-        self.yaml.setVisible(False)
-        self.yaml.setMinimumHeight(160)
+    def __init__(self, parent):
+        super().__init__(parent)
+        self.setWindowTitle("Add button")
+        self.src: str | None = None
+        self.kind = "mouse"
+        self.prompt = QLabel("Press the button on your mouse here.\n\n"
+                             "Buttons that send a key combo work too.")
+        self.prompt.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self.prompt.setMinimumSize(380, 140)
+        self.prompt.setFrameShape(QFrame.Shape.StyledPanel)
+        self.found = QLabel()
+        self.found.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self.manual = QLineEdit(placeholderText="Or type it: forward, extra1, Shift+Meta+[")
+        self.buttons = QDialogButtonBox(QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel)
+        self.buttons.accepted.connect(self._accept)
+        self.buttons.rejected.connect(self.reject)
+        self.error = QLabel()
+        self.error.setStyleSheet("color: #d24545;")
+        layout = QVBoxLayout(self)
+        for w in (self.prompt, self.found, self.manual, self.error, self.buttons):
+            layout.addWidget(w)
+        self.prompt.setFocusPolicy(Qt.FocusPolicy.StrongFocus)
+        self.prompt.setFocus()
+        self.prompt.installEventFilter(self)
 
-        grid = QGridLayout(self)
-        grid.addWidget(self.title, 0, 0, 1, 2)
-        grid.addWidget(self.yaml_button, 0, 2, Qt.AlignmentFlag.AlignRight)
-        for row, (name, widget) in enumerate(
-            (("When", self.when), ("Only if", self.only_if), ("Do", self.do)), start=1
-        ):
-            head = QLabel(name)
-            head.setStyleSheet("color: palette(placeholder-text);")
-            grid.addWidget(head, row, 0, Qt.AlignmentFlag.AlignTop)
-            grid.addWidget(widget, row, 1, 1, 2)
-        grid.addWidget(self.yaml, 4, 0, 1, 3)
-        grid.setColumnStretch(1, 1)
-        grid.setRowStretch(5, 1)
-        self.show_message("Select a binding to see what it does.")
+    def eventFilter(self, obj, event):
+        if obj is self.prompt:
+            if event.type() == event.Type.MouseButtonPress:
+                name = keys.MOUSE_BUTTONS.get(event.button())
+                if name in ("left", "right"):
+                    self.found.setText(f"That's the {name} button. Binding it can make your mouse hard to use.")
+                self._set(name or f"button{int(event.button())}", "mouse")
+                return True
+            if event.type() == event.Type.KeyPress:
+                combo = keys.from_key_event(event)
+                if combo:
+                    self._set(combo, "shortcut")
+                return True
+        return super().eventFilter(obj, event)
 
-    def show_message(self, text: str):
-        self.title.setText(text)
-        for w in (self.when, self.only_if, self.do, self.yaml_button, self.yaml):
-            w.setVisible(False)
+    def _set(self, src: str, kind: str):
+        self.src, self.kind = src, kind
+        self.manual.clear()
+        if not self.found.text().startswith("That's"):
+            self.found.clear()
+        self.prompt.setText(f"Got it: {d.button_label(src)}\n\nPress another to change it.")
 
-    def show_binding(self, title: str, b: cfg.Binding):
-        self.title.setText(title)
-        self.when.setText(" · ".join(d.trigger_parts(b.data)))
-        conds = d.conditions(b.data.get("conditions"))
-        self.only_if.setText("<br>".join(conds) if conds else "Always")
-        rows = "".join(
-            f"<tr><td style='padding-right:12px'><i>{stage}</i></td><td>{' → '.join(steps)}</td></tr>"
-            for stage, steps in d.stages(b.data.get("actions"))
-        )
-        self.do.setText(f"<table>{rows}</table>" if rows else "Nothing")
-        self.yaml.setPlainText(d.to_yaml(b.data))
-        for w in (self.when, self.only_if, self.do, self.yaml_button):
-            w.setVisible(True)
-        self.yaml.setVisible(self.yaml_button.isChecked())
+    def _accept(self):
+        text = self.manual.text().strip()
+        if text:
+            try:
+                if "+" in text:
+                    self.src, self.kind = keys.parse_combo(text), "shortcut"
+                else:
+                    self.src, self.kind = keys.to_name(text), "mouse"
+            except ValueError as e:
+                self.error.setText(str(e))
+                return
+        if not self.src:
+            self.error.setText("Press a button first, or type it.")
+            return
+        self.accept()
 
 
 class BindingsPage(QWidget):
-    """A list of rows on top and the selected row's details below."""
+    """A list of rows, an add bar under it, and the selected row's editor below."""
 
-    def __init__(self, headers: list[str]):
+    def __init__(self, headers: list[str], config: cfg.Config):
         super().__init__()
         self.tree = QTreeWidget()
         self.tree.setHeaderLabels(headers)
         self.tree.setRootIsDecorated(False)
         self.tree.setAlternatingRowColors(True)
         self.tree.currentItemChanged.connect(self._selected)
-        self.view = BindingView()
+        self.add_bar = QHBoxLayout()
+        self.add_bar.addStretch(1)
+        top = QWidget()
+        tl = QVBoxLayout(top)
+        tl.setContentsMargins(0, 0, 0, 0)
+        tl.addWidget(self.tree)
+        tl.addLayout(self.add_bar)
+        self.editor = BindingEditor(config)
         scroll = QScrollArea(widgetResizable=True, frameShape=QFrame.Shape.NoFrame)
-        scroll.setWidget(self.view)
+        scroll.setWidget(self.editor)
         split = QSplitter(Qt.Orientation.Vertical)
-        split.addWidget(self.tree)
+        split.addWidget(top)
         split.addWidget(scroll)
-        split.setSizes([260, 300])
+        split.setSizes([240, 420])
         QVBoxLayout(self).addWidget(split)
 
-    def add_row(self, columns: list[str], payload) -> QTreeWidgetItem:
+    def add_button(self, widget: QWidget):
+        self.add_bar.insertWidget(self.add_bar.count() - 1, widget)
+
+    def add_row(self, columns: list[str], payload: dict) -> QTreeWidgetItem:
         item = QTreeWidgetItem(columns)
         item.setData(0, ROLE, payload)
         self.tree.addTopLevelItem(item)
@@ -200,29 +225,30 @@ class BindingsPage(QWidget):
         item.setFont(0, font)
         self.tree.addTopLevelItem(item)
 
-    def finish(self, empty_text: str):
+    def rows(self):
+        for i in range(self.tree.topLevelItemCount()):
+            item = self.tree.topLevelItem(i)
+            if item.flags() & Qt.ItemFlag.ItemIsSelectable:
+                yield item
+
+    def finish(self, empty_text: str, select=None):
         for i in range(self.tree.columnCount()):
             self.tree.resizeColumnToContents(i)
-        first = next(
-            (self.tree.topLevelItem(i) for i in range(self.tree.topLevelItemCount())
-             if self.tree.topLevelItem(i).flags() & Qt.ItemFlag.ItemIsSelectable),
-            None,
-        )
-        if first:
-            self.tree.setCurrentItem(first)
+        rows = list(self.rows())
+        target = next((r for r in rows if select and select(r.data(0, ROLE))), rows[0] if rows else None)
+        if target:
+            self.tree.setCurrentItem(target)
         else:
-            self.view.show_message(empty_text)
+            self.editor.show_message(empty_text)
 
     def _selected(self, item, _prev):
         if not item:
             return
-        payload = item.data(0, ROLE)
-        if isinstance(payload, tuple):  # (title, binding or None, fallback message, ...)
-            title, binding, message = payload[:3]
-            if binding:
-                self.view.show_binding(title, binding)
-            else:
-                self.view.show_message(message)
+        p = item.data(0, ROLE)
+        if p.get("binding"):
+            self.editor.show_binding(p["title"], p["binding"])
+        else:
+            self.editor.show_message(p["message"], p.get("bind"))
 
 
 class MainWindow(QMainWindow):
@@ -506,8 +532,9 @@ class MainWindow(QMainWindow):
         self._check_issues()
         self._fill_sidebar()
 
-    def _fill_sidebar(self):
+    def _fill_sidebar(self, select=None):
         keep = self.current
+        self._pending_select = select
         self.sidebar.blockSignals(True)
         self.sidebar.clear()
 
@@ -538,6 +565,7 @@ class MainWindow(QMainWindow):
     def _sidebar_changed(self, item, prev):
         if not item:
             return
+        select, self._pending_select = getattr(self, "_pending_select", None), None
         payload = item.data(ROLE)
         if payload == ADD_APP:
             self.sidebar.blockSignals(True)
@@ -545,7 +573,7 @@ class MainWindow(QMainWindow):
             self.sidebar.blockSignals(False)
             QTimer.singleShot(0, self.add_app)
         elif payload:
-            self._show_scope(*payload)
+            self._show_scope(*payload, select=select)
 
     def _sidebar_menu(self, pos):
         item = self.sidebar.itemAt(pos)
@@ -592,35 +620,58 @@ class MainWindow(QMainWindow):
             old.deleteLater()
         self.pages.addWidget(widget)
 
-    def _show_scope(self, scope: str, app: str | None):
+    def _show_scope(self, scope: str, app: str | None, select=None):
+        old = self.pages.currentWidget()
+        tab = old.currentIndex() if isinstance(old, QTabWidget) and self.current == (scope, app) else 0
         self.current = (scope, app)
         if scope == "devices":
             self._set_page(self._device_settings_page())
             return
         if scope == "custom":
-            self._set_page(self._custom_page())
+            self._set_page(self._custom_page(select))
             return
         tabs = QTabWidget()
         for title, section in cfg.DEVICES.items():
             if self.tab_visible(title):
-                page = self._mouse_page(scope, app) if section == "mouse" else \
-                    self._gesture_page(scope, app, section)
+                page = self._mouse_page(scope, app, select) if section == "mouse" else \
+                    self._gesture_page(scope, app, section, select)
                 tabs.addTab(page, title)
+        tabs.setCurrentIndex(min(tab, tabs.count() - 1))
         self._set_page(tabs)
 
-    def _mouse_page(self, scope, app) -> QWidget:
+    def _refresh(self, select=None):
+        """Rebuild the current page after bindings were added, removed or moved."""
+        self.mark_dirty()
+        if self.current[0] == "app" and self.current[1] not in self.config.apps:
+            self.current = ("global", None)
+        self._fill_sidebar(select)
+
+    def _wire(self, page: BindingsPage, row_text):
+        """Keep a page's rows and the dirty flag in step with its editor."""
+        def changed():
+            self.mark_dirty()
+            item = page.tree.currentItem()
+            if item:
+                p = item.data(0, ROLE)
+                for col, text in enumerate(row_text(p)):
+                    item.setText(col, text)
+        page.editor.changed.connect(changed)
+        page.editor.structure_changed.connect(lambda: self._refresh())
+
+    def _mouse_page(self, scope, app, select=None) -> QWidget:
         where = scope_title(scope, app)
-        page = BindingsPage(["Button", "Input", f"In {where}"])
+        page = BindingsPage(["Button (double-click to rename)", "Input", f"In {where}"], self.config)
+        page.tree.headerItem().setToolTip(0, "Double-click a name to rename it")
         bindings = self.config.bindings_for(scope, app)
         page.add_group("Buttons")
-        page.tree.headerItem().setToolTip(0, "Double-click a name to rename it")
-        page.tree.headerItem().setText(0, "Button (double-click to rename)")
         for btn in self.config.buttons:
             b = next((x for x in bindings if x.button == btn.src), None)
             name = button_name(btn)
             item = page.add_row(
                 [name, d.button_label(btn.src), d.summary(b) if b else "Default"],
-                (f"{name} in {where}", b, f"{name} does its normal thing in {where}.", btn.src),
+                {"title": f"{name} in {where}", "binding": b, "src": btn.src,
+                 "message": f"{name} does its normal thing in {where}.",
+                 "bind": lambda _=False, btn=btn: self._bind_button(btn, scope, app)},
             )
             item.setFlags(item.flags() | Qt.ItemFlag.ItemIsEditable)
         gestures = [b for b in bindings if b.section == "mouse" and not b.button]
@@ -628,50 +679,83 @@ class MainWindow(QMainWindow):
             page.add_group("Gestures")
             for b in gestures:
                 title = d.gesture_title(b.data)
-                page.add_row([title, "", d.summary(b)], (f"{title} in {where}", b, ""))
-        page.finish("No mouse buttons found in your config yet.")
-        # Only the name column is editable.
+                page.add_row([title, "", d.summary(b)], {"title": f"{title} in {where}", "binding": b})
+        add = QPushButton(QIcon.fromTheme("list-add"), "Add button…")
+        add.clicked.connect(self.add_button)
+        page.add_button(add)
+        page.add_button(self._gesture_menu_button("mouse", scope, app))
+        page.finish("No mouse buttons yet. Add one by pressing it.", select)
+        page.tree.setEditTriggers(QTreeWidget.EditTrigger.NoEditTriggers)
         page.tree.itemDoubleClicked.connect(
             lambda item, col: page.tree.editItem(item, 0) if item.flags() & Qt.ItemFlag.ItemIsEditable else None)
-        page.tree.setEditTriggers(QTreeWidget.EditTrigger.NoEditTriggers)
         page.tree.itemChanged.connect(lambda item, col: self._renamed(page, item) if col == 0 else None)
+        self._wire(page, lambda p: [page.tree.currentItem().text(0), page.tree.currentItem().text(1),
+                                    d.summary(p["binding"]) if p.get("binding") else "Default"])
         return page
 
-    def _renamed(self, page: BindingsPage, item: QTreeWidgetItem):
-        payload = item.data(0, ROLE)
-        if not (isinstance(payload, tuple) and len(payload) == 4):
+    def _gesture_menu_button(self, section, scope, app) -> QToolButton:
+        menu = QMenu(self)
+        for t in GESTURE_TYPES[section]:
+            if section == "mouse" and t == "press":
+                continue  # buttons are added with Add button
+            menu.addAction(t.capitalize(), lambda t=t: self._add_gesture(section, t, scope, app))
+        b = self._menu_button("Add gesture", "list-add", menu)
+        return b
+
+    def _bind_button(self, btn: cfg.Button, scope, app):
+        section, data = new_button_binding(self.config, btn, scope, app)
+        self.config.add_binding(section, data)
+        self._refresh(lambda p: p.get("src") == btn.src)
+
+    def _add_gesture(self, section, trigger_type, scope, app):
+        data = new_gesture_binding(self.config, section, trigger_type, scope, app)
+        self.config.add_binding(section, data)
+        self._refresh(lambda p: p.get("binding") is not None and p["binding"].data is data)
+
+    def add_button(self):
+        dialog = CaptureDialog(self)
+        if dialog.exec() != QDialog.DialogCode.Accepted:
             return
-        src = payload[3]
+        src = dialog.src
+        if not any(b.src == src for b in self.config.buttons):
+            self.config.add_button(src, d.button_label(src))
+            self.mark_dirty()
+        self._show_scope(*self.current, select=lambda p: p.get("src") == src)
+
+    def _renamed(self, page: BindingsPage, item: QTreeWidgetItem):
+        p = item.data(0, ROLE)
+        if not (isinstance(p, dict) and "src" in p):
+            return
+        src = p["src"]
         btn = next(b for b in self.config.buttons if b.src == src)
-        new = item.text(0).strip()
-        if not new:  # empty resets to the raw input
-            new = d.button_label(src)
+        new = item.text(0).strip() or d.button_label(src)  # empty resets to the raw input
         if new == button_name(btn):
             return
         self.config.rename_button(src, new if new != d.button_label(src) else src)
         self.mark_dirty()
-        page.tree.blockSignals(True)
-        item.setText(0, new)
-        page.tree.blockSignals(False)
-        page._selected(page.tree.currentItem(), None)
+        self._show_scope(*self.current, select=lambda q: q.get("src") == src)
 
-    def _gesture_page(self, scope, app, section) -> QWidget:
+    def _gesture_page(self, scope, app, section, select=None) -> QWidget:
         where = scope_title(scope, app)
-        page = BindingsPage(["Gesture", "Does"])
+        page = BindingsPage(["Gesture", "Does"], self.config)
         for b in self.config.bindings_for(scope, app, section):
             if b.button:  # mouse-emitted shortcuts live on the Mouse tab
                 continue
             title = d.gesture_title(b.data)
-            page.add_row([title, d.summary(b)], (f"{title} in {where}", b, ""))
-        page.finish(f"No {section} bindings for {where} yet.")
+            page.add_row([title, d.summary(b)], {"title": f"{title} in {where}", "binding": b})
+        page.add_button(self._gesture_menu_button(section, scope, app))
+        page.finish(f"No {section} bindings for {where} yet.", select)
+        self._wire(page, lambda p: [d.gesture_title(p["binding"].data), d.summary(p["binding"])])
         return page
 
-    def _custom_page(self) -> QWidget:
-        page = BindingsPage(["Rule", "Device", "Does"])
+    def _custom_page(self, select=None) -> QWidget:
+        page = BindingsPage(["Rule", "Device", "Does"], self.config)
         for b in self.config.bindings_for("custom"):
             title = d.gesture_title(b.data)
-            page.add_row([b.id, b.section.capitalize(), d.summary(b)], (f"{b.id} — {title}", b, ""))
-        page.finish("No custom rules. These are bindings with conditions other than a single app.")
+            page.add_row([b.id, b.section.capitalize(), d.summary(b)], {"title": f"{b.id} — {title}", "binding": b})
+        page.finish("No custom rules. These are bindings with conditions other than a single app. "
+                    "Add more conditions to any binding in its YAML to make one.", select)
+        self._wire(page, lambda p: [p["binding"].id, p["binding"].section.capitalize(), d.summary(p["binding"])])
         return page
 
     def _device_settings_page(self) -> QWidget:
