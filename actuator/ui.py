@@ -9,15 +9,16 @@ from pathlib import Path
 
 from PySide6.QtCore import QFileSystemWatcher, QPoint, QSettings, QSize, Qt, QTimer, QUrl, Signal
 from PySide6.QtGui import (
-    QDesktopServices, QFontDatabase, QIcon, QKeySequence, QPainter, QPixmap, QShortcut,
+    QColor, QDesktopServices, QFontDatabase, QIcon, QKeySequence, QPainter, QPixmap, QShortcut,
 )
 from PySide6.QtWidgets import (
-    QApplication, QDialog, QTextBrowser, QListWidget, QListWidgetItem, QToolTip, QFormLayout, QSpinBox, QDialogButtonBox, QFileDialog, QFrame, QHBoxLayout,
+    QApplication, QDialog, QTextBrowser, QListWidget, QListWidgetItem, QToolTip, QFormLayout, QSpinBox, QDialogButtonBox, QFileDialog, QFrame, QGridLayout, QHBoxLayout,
     QCheckBox, QComboBox, QGroupBox, QInputDialog, QLabel, QLineEdit, QMainWindow, QMenu,
     QMessageBox, QPushButton, QScrollArea, QSizePolicy,
     QSplitter, QStackedWidget, QTabWidget, QToolBar, QToolButton, QTreeWidget,
     QTreeWidgetItem, QVBoxLayout, QWidget,
 )
+from PySide6.QtSvg import QSvgRenderer
 from ruamel.yaml import YAML
 
 from . import REPO_URL, __version__
@@ -306,52 +307,95 @@ class SidebarTree(QTreeWidget):
 
 
 DEV_FEATURES = [  # (settings key, label, tooltip) — all off by default
-    ("device_settings", "Device settings", "Swipe angles, thresholds and timeouts for your devices."),
-    ("yaml_editor", "Full YAML editor", "Adds a YAML button to the toolbar to edit config.yaml directly."),
-    ("only_if", "Only if conditions", "Shows the condition builder in the binding editor."),
+    ("device_settings", "Enable Device Settings", "Swipe angles, thresholds and timeouts for your devices."),
+    ("yaml_editor", "Enable Full YAML Editor", "Adds a YAML button to the toolbar to edit config.yaml directly."),
+    ("only_if", "Enable Only If Conditions", "Shows the condition builder in the binding editor."),
 ]
 
 
+# GitHub's mark (from github.com/logos), drawn in the theme's text color.
+GITHUB_MARK = (
+    "M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53"
+    "-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33"
+    ".66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67"
+    "-.21 2.2.82.64-.18 1.32-.27 2-.27.68 0 1.36.09 2 .27 1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56"
+    ".82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8"
+    ".013 8.013 0 0016 8c0-4.42-3.58-8-8-8z")
+
+
+def github_icon(color: QColor, size: int = 16) -> QPixmap:
+    svg = (f"<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'>"
+           f"<path fill='{color.name()}' d='{GITHUB_MARK}'/></svg>").encode()
+    pixmap = QPixmap(size * 2, size * 2)
+    pixmap.fill(Qt.GlobalColor.transparent)
+    painter = QPainter(pixmap)
+    QSvgRenderer(svg).render(painter)
+    painter.end()
+    pixmap.setDevicePixelRatio(2)
+    return pixmap
+
+
+def _heading(text: str) -> QLabel:
+    label = QLabel(text)
+    label.setStyleSheet("font-weight: 600; margin-top: 6px;")
+    return label
+
+
 class OptionsDialog(QDialog):
+    """Options, laid out like KDE's settings pages: small headings, aligned rows, no boxes."""
+
     def __init__(self, parent, tabs: dict[str, bool], autostart: bool, keep: int):
         super().__init__(parent)
         self.settings = parent.settings
         self._version_clicks = 0
         self.setWindowTitle("Options")
+        layout = QVBoxLayout(self)
+        layout.setSpacing(6)
+        layout.setContentsMargins(18, 14, 18, 14)
+
+        # General
+        layout.addWidget(_heading("General"))
+        # Plain left-aligned rows, like the sections below (a form would push the checkbox right).
         self.autostart = QCheckBox("Start InputActions when I log in")
         self.autostart.setChecked(autostart)
         info = QToolButton(icon=QIcon.fromTheme("help-about-symbolic", QIcon.fromTheme("dialog-information")))
         info.setAutoRaise(True)
         info.setToolTip("How autostart works")
         info.clicked.connect(self._explain_autostart)
-        ia = QGroupBox("Autostart")
-        il = QHBoxLayout(ia)
-        il.addWidget(self.autostart)
-        il.addStretch(1)
-        il.addWidget(info)
+        auto_row = QHBoxLayout()
+        auto_row.addWidget(self.autostart)
+        auto_row.addWidget(info)
+        auto_row.addStretch(1)
+        layout.addLayout(auto_row)
         self.keep = QSpinBox(minimum=1, maximum=200)
         self.keep.setValue(keep)
-        backups = QGroupBox("Backups")
-        bl = QFormLayout(backups)
-        bl.addRow("Recent saves to keep", self.keep)
+        keep_row = QHBoxLayout()
+        keep_label = QLabel("How many saves to keep:")
+        keep_label.setContentsMargins(3, 0, 0, 0)  # line up with the checkbox text above
+        keep_row.addWidget(keep_label)
+        keep_row.addWidget(self.keep)
+        keep_row.addStretch(1)
+        layout.addLayout(keep_row)
+
+        # Tabs, in two columns
+        layout.addWidget(_heading("Device tabs"))
+        grid = QGridLayout()
+        grid.setHorizontalSpacing(24)
         self.boxes = {}
-        group = QGroupBox("Show these tabs")
-        gl = QVBoxLayout(group)
-        for title, on in tabs.items():
+        for i, (title, on) in enumerate(tabs.items()):
             box = QCheckBox(title)
             box.setChecked(on)
             box.toggled.connect(self._keep_one)
-            gl.addWidget(box)
+            grid.addWidget(box, i // 2, i % 2)
             self.boxes[title] = box
-        buttons = QDialogButtonBox(QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel)
-        buttons.accepted.connect(self.accept)
-        buttons.rejected.connect(self.reject)
-        layout = QVBoxLayout(self)
-        layout.addWidget(ia)
-        layout.addWidget(backups)
-        layout.addWidget(group)
-        self.dev_box = QGroupBox("Developer")
+        grid.setColumnStretch(2, 1)
+        layout.addLayout(grid)
+
+        # Developer (only once turned on)
+        self.dev_box = QWidget()
         self.dev_layout = QVBoxLayout(self.dev_box)
+        self.dev_layout.setContentsMargins(0, 0, 0, 0)
+        self.dev_layout.addWidget(_heading("Developer Options"))
         self.features = {}
         for key, label, note in DEV_FEATURES:
             box = QCheckBox(label)
@@ -359,31 +403,69 @@ class OptionsDialog(QDialog):
             box.setToolTip(note)
             self.dev_layout.addWidget(box)
             self.features[key] = box
-        devices = QPushButton(QIcon.fromTheme("input-mouse"), "Open device settings…")
+        dev_buttons = QHBoxLayout()
+        devices = QPushButton(QIcon.fromTheme("input-mouse"), "Device settings…")
         devices.clicked.connect(parent.open_device_settings)
         devices.setVisible(self.features["device_settings"].isChecked())
         self.features["device_settings"].toggled.connect(devices.setVisible)
-        self.dev_layout.addWidget(devices, 0, Qt.AlignmentFlag.AlignLeft)
         dev_off = QPushButton("Turn off developer mode")
         dev_off.clicked.connect(lambda: self._set_dev_mode(False))
-        self.dev_layout.addWidget(dev_off, 0, Qt.AlignmentFlag.AlignLeft)
+        dev_buttons.addWidget(devices)
+        dev_buttons.addWidget(dev_off)
+        dev_buttons.addStretch(1)
+        self.dev_layout.addLayout(dev_buttons)
         self.dev_box.setVisible(self.settings.value("dev_mode", False, type=bool))
         layout.addWidget(self.dev_box)
         layout.addStretch(1)
 
-        # Footer: project link and version. Clicking the version ten times turns on developer mode.
-        footer = QHBoxLayout()
-        link = QLabel(f"<a href='{REPO_URL}'>GitHub</a>")
-        link.setOpenExternalLinks(True)
+        buttons = QDialogButtonBox(QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel
+                                   | QDialogButtonBox.StandardButton.RestoreDefaults)
+        buttons.accepted.connect(self.accept)
+        buttons.rejected.connect(self.reject)
+        reset = buttons.button(QDialogButtonBox.StandardButton.RestoreDefaults)
+        reset.setText("Reset to defaults")
+        reset.clicked.connect(self._reset_defaults)
+        layout.addSpacing(8)
+        layout.addWidget(buttons)
+        # Start with focus on OK; otherwise the first checkbox gets it, and some themes underline it.
+        ok = buttons.button(QDialogButtonBox.StandardButton.Ok)
+        ok.setDefault(True)
+        QTimer.singleShot(0, ok.setFocus)
+
+        # Footer, centered: GitHub link, then the version. Clicking the version ten
+        # times turns on developer mode.
+        line = QFrame()
+        line.setFrameShape(QFrame.Shape.HLine)
+        line.setStyleSheet("color: palette(mid);")
+        layout.addSpacing(6)
+        layout.addWidget(line)
+        logo = QLabel()
+        logo.setPixmap(github_icon(self.palette().text().color()))
+        links = QLabel(f"<a href='{REPO_URL}'>GitHub</a>")
+        links.setOpenExternalLinks(True)
+        link_row = QHBoxLayout()
+        link_row.addStretch(1)
+        link_row.addWidget(logo)
+        link_row.addWidget(links)
+        link_row.addStretch(1)
+        layout.addLayout(link_row)
         self.version = QLabel(f"Version {__version__}")
+        self.version.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self.version.setStyleSheet("color: palette(placeholder-text);")
         self.version.mousePressEvent = self._version_clicked
-        footer.addWidget(link)
-        footer.addStretch(1)
-        footer.addWidget(self.version)
-        layout.addLayout(footer)
-        layout.addWidget(buttons)
-        self.resize(320, 0)
+        layout.addWidget(self.version)
+        self.setMinimumWidth(420)
+        self.resize(420, 0)
+
+    def _reset_defaults(self):
+        """Back to how Actuator starts out. Applied on OK, like any other change here."""
+        self.autostart.setChecked(True)
+        self.keep.setValue(10)
+        for box in self.boxes.values():
+            box.setChecked(True)
+        if self.dev_box.isVisible():
+            for box in self.features.values():
+                box.setChecked(False)
 
     def _toast(self, text: str):
         """A small Android-style message just above the version label."""
@@ -391,7 +473,7 @@ class OptionsDialog(QDialog):
         QToolTip.showText(pos - QPoint(0, self.version.height() * 2), text, self.version, self.version.rect(), 1500)
 
     def _version_clicked(self, _event):
-        if self.dev_box.isVisible():
+        if self.settings.value("dev_mode", False, type=bool):
             self._toast("No need, you're already a developer.")
             return
         self._version_clicks += 1
@@ -406,7 +488,6 @@ class OptionsDialog(QDialog):
         self.settings.setValue("dev_mode", on)
         self._version_clicks = 0
         self.dev_box.setVisible(on)
-        self.version.setText(f"Version {__version__}" + ("  · developer mode" if on else ""))
         self.adjustSize()
 
     def _explain_autostart(self):
