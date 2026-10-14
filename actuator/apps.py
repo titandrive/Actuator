@@ -1,6 +1,8 @@
 """Installed apps, from .desktop entries: names, icons, and the window class to match."""
 
 import os
+import shlex
+import shutil
 from dataclasses import dataclass
 from functools import lru_cache
 from pathlib import Path
@@ -40,6 +42,21 @@ def _parse(path: Path) -> dict[str, str]:
     return entry
 
 
+def _runnable(entry: dict[str, str]) -> bool:
+    """False for launchers left behind by uninstalled software (their program is gone)."""
+    try_exec = entry.get("TryExec", "")
+    if try_exec and not (Path(try_exec).exists() if "/" in try_exec else shutil.which(try_exec)):
+        return False
+    exec_line = entry.get("Exec", "").strip()
+    try:
+        program = shlex.split(exec_line)[0] if exec_line else ""
+    except ValueError:  # malformed quoting: don't hide the app over it
+        return True
+    if program.startswith("/") and not Path(program).exists():
+        return False
+    return True
+
+
 @lru_cache(maxsize=1)
 def installed() -> tuple[App, ...]:
     seen: dict[str, App] = {}
@@ -52,11 +69,16 @@ def installed() -> tuple[App, ...]:
                 continue  # earlier directories take precedence, as in the XDG spec
             e = _parse(path)
             if (e.get("Type") != "Application" or e.get("NoDisplay") == "true"
-                    or e.get("Hidden") == "true" or not e.get("Name")):
+                    or e.get("Hidden") == "true" or not e.get("Name") or not _runnable(e)):
                 continue
             # On Wayland the window class is usually the desktop file's name; StartupWMClass wins if set.
             seen[desktop_id] = App(e["Name"], e.get("StartupWMClass") or desktop_id, e.get("Icon", ""))
-    return tuple(sorted(seen.values(), key=lambda a: a.name.lower()))
+    # Some apps ship several launchers for the same window (an installer's entry plus a manual one).
+    # Bindings match the window class, so those are one app: keep the first of each.
+    unique: dict[str, App] = {}
+    for app in seen.values():
+        unique.setdefault(app.window_class.lower(), app)
+    return tuple(sorted(unique.values(), key=lambda a: a.name.lower()))
 
 
 def by_class(window_class: str) -> App | None:
