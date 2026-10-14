@@ -4,6 +4,14 @@ import re
 
 WINDOW_CLASS = re.compile(r"^\$window_class\s*(==|matches)\s*(.+)$")
 MODIFIERS = ["ctrl", "shift", "alt", "meta"]
+
+
+def app_condition(app: str) -> str:
+    """The condition for "in this app". Lowercase classes compare exactly; others ignore case,
+    since launchers often capitalize a class the window itself reports in lowercase."""
+    if app == app.lower():
+        return f"$window_class == {app}"
+    return f"$window_class matches (?i)^{re.escape(app)}$"
 EDGE = 0.02  # pointer within 2% of a screen edge counts as "at" it
 
 # Row type → (operations, value kind). Value kinds: None, "text", or a list of choices.

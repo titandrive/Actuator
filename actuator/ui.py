@@ -6,10 +6,10 @@ import subprocess
 from datetime import date, datetime
 from pathlib import Path
 
-from PySide6.QtCore import QFileSystemWatcher, QSettings, Qt, QTimer, Signal
+from PySide6.QtCore import QFileSystemWatcher, QSettings, QSize, Qt, QTimer, Signal
 from PySide6.QtGui import QAction, QIcon, QKeySequence, QShortcut
 from PySide6.QtWidgets import (
-    QApplication, QDialog, QFormLayout, QSpinBox, QDialogButtonBox, QFileDialog, QFrame, QGridLayout, QHBoxLayout,
+    QApplication, QDialog, QListWidget, QListWidgetItem, QFormLayout, QSpinBox, QDialogButtonBox, QFileDialog, QFrame, QGridLayout, QHBoxLayout,
     QCheckBox, QComboBox, QGroupBox, QInputDialog, QLabel, QLineEdit, QMainWindow, QMenu,
     QMessageBox, QPlainTextEdit, QPushButton, QScrollArea, QSizePolicy,
     QSplitter, QStackedWidget, QTabWidget, QToolBar, QToolButton, QTreeWidget,
@@ -17,6 +17,7 @@ from PySide6.QtWidgets import (
 )
 from ruamel.yaml import YAML
 
+from . import apps as apps_mod
 from . import config as cfg
 from . import copying
 from . import describe as d
@@ -91,40 +92,61 @@ def button_name(b: cfg.Button) -> str:
 
 
 def scope_title(scope: str, app: str | None) -> str:
-    return app.capitalize() if scope == "app" else scope.capitalize()
+    return apps_mod.display_name(app) if scope == "app" else scope.capitalize()
 
 
 def app_counts(c: cfg.Config) -> dict[str, int]:
     counts = {"Global": len(c.bindings_for("global")) + len(c.bindings_for("custom"))}
     for app in c.apps:
-        counts[app.capitalize()] = len(c.bindings_for("app", app))
+        counts[apps_mod.display_name(app)] = len(c.bindings_for("app", app))
     return counts
 
 
 class AddAppDialog(QDialog):
-    """Type a window class, or pick it from a window."""
+    """Pick an installed app from a searchable list, pick a window, or type a window class."""
 
-    def __init__(self, parent, folders: list[str]):
+    def __init__(self, parent, folders: list[str], existing: list[str] = ()):
         super().__init__(parent)
         self.setWindowTitle("Add app")
+        existing = {e.lower() for e in existing}
+        self.search = QLineEdit(placeholderText="Search apps")
+        self.search.setClearButtonEnabled(True)
+        self.search.textChanged.connect(self._filter)
+        self.list = QListWidget()
+        self.list.setIconSize(self.list.iconSize().expandedTo(QSize(24, 24)))
+        for app in apps_mod.installed():
+            item = QListWidgetItem(QIcon.fromTheme(app.icon, QIcon.fromTheme("application-x-executable")), app.name)
+            item.setData(Qt.ItemDataRole.UserRole, app.window_class)
+            item.setToolTip(f"Window class: {app.window_class}")
+            if app.window_class.lower() in existing:
+                item.setText(f"{app.name}  (already added)")
+                item.setFlags(Qt.ItemFlag.NoItemFlags)
+            self.list.addItem(item)
+        self.list.itemDoubleClicked.connect(lambda *_: self._accept())
+        self.list.currentItemChanged.connect(lambda item, _p: item and self.edit.clear())
+        self.pick = QPushButton(QIcon.fromTheme("crosshairs"), "Pick window")
+        self.pick.setToolTip("Click a running app's window to use exactly what it reports. "
+                             "Most reliable for games.")
+        self.pick.clicked.connect(self._start_pick)
+        self.edit = QLineEdit(placeholderText="Or type a window class")
+        self.edit.textEdited.connect(lambda _t: self.list.setCurrentItem(None))
+        self.hint = QLabel()
+        self.hint.setWordWrap(True)
+        self.hint.setStyleSheet("color: palette(placeholder-text);")
         self.folder_box = QComboBox()
         self.folder_box.addItem("No folder", None)
         for f in folders:
             self.folder_box.addItem(f, f)
-        self.edit = QLineEdit(placeholderText="steam")
-        self.pick = QPushButton(QIcon.fromTheme("crosshairs"), "Pick window")
-        self.pick.clicked.connect(self._start_pick)
-        self.hint = QLabel("Window class of the app. Pick window reads it from the window you click.")
-        self.hint.setWordWrap(True)
-        self.hint.setStyleSheet("color: palette(placeholder-text);")
         buttons = QDialogButtonBox(QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel)
         buttons.accepted.connect(self._accept)
         buttons.rejected.connect(self.reject)
-        row = QHBoxLayout()
-        row.addWidget(self.edit, 1)
-        row.addWidget(self.pick)
+        top = QHBoxLayout()
+        top.addWidget(self.search, 1)
+        top.addWidget(self.pick)
         layout = QVBoxLayout(self)
-        layout.addLayout(row)
+        layout.addLayout(top)
+        layout.addWidget(self.list, 1)
+        layout.addWidget(self.edit)
         layout.addWidget(self.hint)
         if folders:
             frow = QHBoxLayout()
@@ -132,8 +154,21 @@ class AddAppDialog(QDialog):
             frow.addWidget(self.folder_box, 1)
             layout.addLayout(frow)
         layout.addWidget(buttons)
-        self.resize(420, 0)
+        self.resize(440, 560)
+        self.search.setFocus()
         self._left = 0
+
+    def _filter(self, text: str):
+        text = text.lower()
+        first = None
+        for i in range(self.list.count()):
+            item = self.list.item(i)
+            hit = text in item.text().lower() or text in str(item.data(Qt.ItemDataRole.UserRole)).lower()
+            item.setHidden(not hit)
+            if hit and first is None and item.flags() & Qt.ItemFlag.ItemIsSelectable:
+                first = item
+        if text and first:
+            self.list.setCurrentItem(first)  # Enter adds the top match
 
     def _start_pick(self):
         self._left = 3
@@ -150,20 +185,25 @@ class AddAppDialog(QDialog):
         self.pick.setEnabled(True)
         self.raise_()
         self.activateWindow()
-        if wc and wc.lower() != "actuator":
-            self.edit.setText(wc)
-            self.hint.setText(f"Picked {wc}.")
-        else:
-            self.hint.setText("Couldn't read a window. Try again, or type the class.")
+        if not wc or wc.lower() == "actuator":
+            self.hint.setText("Couldn't read a window. Try again, or pick from the list.")
+            return
+        self.list.setCurrentItem(None)
+        self.edit.setText(wc)
+        app = apps_mod.by_class(wc)
+        self.hint.setText(f"Picked {app.name if app else wc} ({wc}).")
 
     def _accept(self):
-        if self.edit.text().strip():
+        if self.value():
             self.accept()
         else:
-            self.hint.setText("Enter a window class first.")
+            self.hint.setText("Pick an app first.")
 
     def value(self) -> str:
-        return self.edit.text().strip()
+        if self.edit.text().strip():
+            return self.edit.text().strip()
+        item = self.list.currentItem()
+        return item.data(Qt.ItemDataRole.UserRole) if item and not item.isHidden() else ""
 
     def folder(self) -> str | None:
         return self.folder_box.currentData()
@@ -836,12 +876,12 @@ class MainWindow(QMainWindow):
             font.setBold(True)
             f.setFont(0, font)
             for app in shown:
-                items[("app", app)] = entry(app.capitalize(), app, ("app", app), f)
+                items[("app", app)] = entry(apps_mod.display_name(app), apps_mod.icon_name(app), ("app", app), f)
             f.setExpanded(folder not in collapsed)
             f.setIcon(0, QIcon.fromTheme("folder-open" if f.isExpanded() else "folder"))
         for app in apps:
             if not self.config.folder_of(app):
-                items[("app", app)] = entry(app.capitalize(), app, ("app", app))
+                items[("app", app)] = entry(apps_mod.display_name(app), apps_mod.icon_name(app), ("app", app))
         self.sidebar.blockSignals(False)
         self.sidebar.setCurrentItem(items.get(keep, items[("global", None)]))
 
@@ -890,7 +930,7 @@ class MainWindow(QMainWindow):
                 menu.addAction(f"Take out of {current}", lambda: self.move_app(app, None))
             self._add_copy_all(menu, ("app", app))
             menu.addSeparator()
-            menu.addAction(QIcon.fromTheme("list-remove"), f"Remove {app.capitalize()}…",
+            menu.addAction(QIcon.fromTheme("list-remove"), f"Remove {apps_mod.display_name(app)}…",
                            lambda: self.remove_app(app))
         elif payload == ("global", None):
             self._add_copy_all(menu, ("global", None))
@@ -957,10 +997,10 @@ class MainWindow(QMainWindow):
             self._fill_sidebar()
 
     def add_app(self):
-        dialog = AddAppDialog(self, list(self.config.folders))
+        dialog = AddAppDialog(self, list(self.config.folders), self.config.apps)
         if dialog.exec() != QDialog.DialogCode.Accepted:
             return
-        app, folder = cfg.app_key(dialog.value()), dialog.folder()
+        app, folder = self.config.same_app(cfg.app_key(dialog.value())), dialog.folder()
 
         def change(c):
             if app not in c.apps:
@@ -975,7 +1015,7 @@ class MainWindow(QMainWindow):
         n = len(self.config.bindings_for("app", app))
         detail = f"This deletes its {n} binding{'s' if n != 1 else ''}." if n else "It has no bindings."
         answer = QMessageBox.question(
-            self, "Actuator", f"Remove {app.capitalize()}? {detail}",
+            self, "Actuator", f"Remove {apps_mod.display_name(app)}? {detail}",
             QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.Cancel,
         )
         if answer != QMessageBox.StandardButton.Yes:
@@ -1036,7 +1076,7 @@ class MainWindow(QMainWindow):
     # Copy and paste ---------------------------------------------------------
 
     def _targets(self, exclude) -> list[tuple[str, str | None, str]]:
-        out = [("global", None, "Global")] + [("app", a, a.capitalize()) for a in self.config.apps]
+        out = [("global", None, "Global")] + [("app", a, apps_mod.display_name(a)) for a in self.config.apps]
         return [t for t in out if (t[0], t[1]) != exclude]
 
     def _binding_menu(self, page: BindingsPage, pos):
@@ -1077,10 +1117,10 @@ class MainWindow(QMainWindow):
             self._copy_into(self._clipboard, *self.current)
 
     def _copy_to_new_app(self, items):
-        dialog = AddAppDialog(self, list(self.config.folders))
+        dialog = AddAppDialog(self, list(self.config.folders), self.config.apps)
         if dialog.exec() != QDialog.DialogCode.Accepted:
             return
-        app, folder = cfg.app_key(dialog.value()), dialog.folder()
+        app, folder = self.config.same_app(cfg.app_key(dialog.value())), dialog.folder()
 
         def change(c):
             if app not in c.apps:
@@ -1091,7 +1131,7 @@ class MainWindow(QMainWindow):
             self._copy_into(items, "app", app)
 
     def _copy_into(self, items, scope: str, app: str | None):
-        where = app.capitalize() if app else "Global"
+        where = apps_mod.display_name(app) if app else "Global"
         clash = copying.clashes(self.config, items, scope, app)
         replace = False
         if clash:

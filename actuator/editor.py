@@ -11,6 +11,7 @@ from PySide6.QtWidgets import (
 )
 from ruamel.yaml import YAML
 
+from . import apps
 from . import conditions as conds
 from . import config as cfg
 from . import describe as d
@@ -53,7 +54,7 @@ def unique_id(config: cfg.Config, base: str) -> str:
 
 
 def scope_conditions(scope: str, app: str | None):
-    return [f"$window_class == {app}"] if scope == "app" else None
+    return [conds.app_condition(app)] if scope == "app" else None
 
 
 def default_stage(trigger_type: str) -> str:
@@ -641,7 +642,7 @@ class BindingEditor(QWidget):
         self.instant.setChecked(bool(g.get("instant", False)))
         self.block.setChecked(bool(g.get("block_events", True)))
 
-        where = f"in {b.app.capitalize()}" if b.scope == "app" else ("everywhere" if b.scope == "global" else "")
+        where = f"in {apps.display_name(b.app)}" if b.scope == "app" else ("everywhere" if b.scope == "global" else "")
         self.conditions.load(g, where)
 
         mode, values = detect_mode(g.get("actions"))

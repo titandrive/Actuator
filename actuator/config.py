@@ -65,7 +65,14 @@ class Config:
 
     @property
     def apps(self) -> list[str]:
-        return sorted({b.app for b in self.bindings if b.app} | self.extra_apps)
+        found: dict[str, str] = {}
+        for a in [b.app for b in self.bindings if b.app] + sorted(self.extra_apps):
+            found.setdefault(a.lower(), a)  # "factorio" and "Factorio" are the same app
+        return sorted(found.values(), key=str.lower)
+
+    def same_app(self, app: str) -> str:
+        """The existing spelling of an app, ignoring case, or app itself if new."""
+        return next((a for a in self.apps if a.lower() == app.lower()), app)
 
     @property
     def device_rules(self) -> list:
@@ -76,7 +83,7 @@ class Config:
             b
             for b in self.bindings
             if b.scope == scope
-            and (scope != "app" or b.app == app)
+            and (scope != "app" or (b.app or "").lower() == (app or "").lower())
             and (section is None or b.section == section)
         ]
 
@@ -91,10 +98,10 @@ class Config:
         self.reindex()
 
     def add_app(self, app: str):
-        self.extra_apps.add(app_key(app))
+        self.extra_apps.add(self.same_app(app))
 
     def folder_of(self, app: str) -> str | None:
-        return next((f for f, apps in self.folders.items() if app in apps), None)
+        return next((f for f, apps in self.folders.items() if app.lower() in map(str.lower, apps)), None)
 
     def move_to_folder(self, app: str, folder: str | None):
         for apps in self.folders.values():
@@ -133,6 +140,7 @@ class Config:
 
     def reindex(self):
         self.bindings, self.buttons = [], []
+        canonical: dict[str, str] = {}
         buttons: dict[str, Button] = {}
         for section in DEVICES.values():
             gestures = (self.data.get(section) or {}).get("gestures") or []
@@ -140,6 +148,8 @@ class Config:
                 if not isinstance(g, dict):
                     continue
                 scope, app = parse_scope(g.get("conditions"))
+                if app:
+                    app = canonical.setdefault(app.lower(), app)
                 button = None
                 if section == "mouse" and g.get("type") == "press":
                     mb = g.get("mouse_buttons") or []
@@ -160,9 +170,11 @@ class Config:
 
 
 def app_key(value: str) -> str:
+    """The app name from a window class condition's value: '(?i)^Factorio$' → 'Factorio'."""
     value = value.strip().strip("'\"")
     value = re.sub(r"^\(\?i\)", "", value)
-    return value.lower()
+    value = value.removeprefix("^").removesuffix("$")
+    return re.sub(r"\\(.)", r"\1", value)  # undo regex escaping
 
 
 def parse_scope(conditions) -> tuple[str, str | None]:

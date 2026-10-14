@@ -11,6 +11,7 @@ from ruamel.yaml import YAML
 from ruamel.yaml.comments import CommentedSeq
 from ruamel.yaml.scalarstring import SingleQuotedScalarString
 
+from . import apps
 from . import config as cfg
 from . import describe as d
 
@@ -57,7 +58,7 @@ def _scope_order(config: cfg.Config, b: cfg.Binding) -> tuple:
 
 def _scope_header(b: cfg.Binding) -> str:
     if b.scope == "app":
-        return b.app.capitalize()
+        return apps.display_name(b.app)
     return "Global" if b.scope == "global" else "Custom rules"
 
 

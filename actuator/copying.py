@@ -16,7 +16,7 @@ def retarget(data: dict, scope: str, app: str | None) -> dict | None:
         return None
     _old_app, mode, rows = parts
     new = copy.deepcopy(d.plain(data))
-    value = conds.join(f"$window_class == {app}" if scope == "app" else None, mode, rows)
+    value = conds.join(conds.app_condition(app) if scope == "app" else None, mode, rows)
     if value is None:
         new.pop("conditions", None)
     else:
