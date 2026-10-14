@@ -578,6 +578,7 @@ class MainWindow(QMainWindow):
         self.setCentralWidget(split)
 
         self._apply_features()
+        QTimer.singleShot(0, self._warn_system_config)
         self.watcher = QFileSystemWatcher()
         self.watcher.fileChanged.connect(lambda _p: QTimer.singleShot(300, self._file_changed))
         self.load()
@@ -661,6 +662,16 @@ class MainWindow(QMainWindow):
             self.settings.setValue(f"dev/{key}", box.isChecked())
         self._apply_features()
         self._fill_sidebar()
+
+    def _warn_system_config(self):
+        if not cfg.SYSTEM_CONFIG_PATH.exists():
+            return
+        QMessageBox.warning(
+            self, "InputActions is using a system-wide config",
+            f"InputActions is reading {cfg.SYSTEM_CONFIG_PATH}, which takes priority over your own "
+            f"config at {cfg.CONFIG_PATH}.\n\nActuator edits your own config, so changes here won't "
+            f"take effect until {cfg.SYSTEM_CONFIG_PATH} is moved or removed. That needs admin rights, "
+            "for example:\n\n    sudo mv /etc/inputactions/config.yaml /etc/inputactions/config.yaml.bak")
 
     def feature(self, key: str) -> bool:
         """A developer feature is on only while developer mode is on too."""
@@ -916,6 +927,12 @@ class MainWindow(QMainWindow):
             self.watcher.addPath(path)  # re-add: replacing the file drops the watch
 
     def load(self):
+        try:
+            if cfg.ensure_exists():
+                self.statusBar().showMessage(f"Started a new config at {cfg.CONFIG_PATH}.", 6000)
+        except OSError as e:
+            QMessageBox.critical(self, "Actuator", f"Couldn't create {cfg.CONFIG_PATH}\n\n{e}")
+            return
         self._watch()
         try:
             self.config = cfg.load()

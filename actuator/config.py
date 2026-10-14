@@ -7,6 +7,10 @@ from pathlib import Path
 from ruamel.yaml import YAML
 
 CONFIG_PATH = Path.home() / ".config" / "inputactions" / "config.yaml"
+# InputActions prefers this over the user's config when it exists (see its docs: config.html).
+SYSTEM_CONFIG_PATH = Path("/etc/inputactions/config.yaml")
+# First line of every file Actuator writes; files without it get the one-time "reorganize" notice.
+MANAGED_HEADER = "# InputActions configuration, managed by Actuator."
 
 # YAML section key for each device tab, in display order.
 DEVICES = {
@@ -193,6 +197,16 @@ def parse_scope(conditions) -> tuple[str, str | None]:
 
 def shortcut_key(keys) -> str:
     return "+".join(str(k) for k in keys)
+
+
+def ensure_exists(path: Path | None = None) -> bool:
+    """Create an empty config where InputActions looks for one. True if it had to."""
+    path = path or CONFIG_PATH
+    if path.exists():
+        return False
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(MANAGED_HEADER + "\n")  # new and empty: nothing to reorganize or keep a copy of
+    return True
 
 
 def load(path: Path | None = None) -> Config:

@@ -16,7 +16,7 @@ from . import apps
 from . import config as cfg
 from . import describe as d
 
-HEADER = "# InputActions configuration, managed by Actuator."
+HEADER = cfg.MANAGED_HEADER
 SNAPSHOT_DIR = Path.home() / ".local" / "share" / "actuator" / "snapshots"
 SNAPSHOT_KEEP = 10  # set from the user's options
 
