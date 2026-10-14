@@ -156,7 +156,6 @@ class KeyField(QLineEdit):
     """A text field that can also record key presses as combos."""
 
     recorded = Signal()
-    focus_lost = Signal()
 
     def __init__(self):
         super().__init__()
@@ -202,11 +201,6 @@ class KeyField(QLineEdit):
         if self._lone and keys.LONE_MODIFIERS.get(Qt.Key(event.key())) == self._lone:
             self._add(self._lone)
         self._lone = None
-
-    def focusOutEvent(self, event):
-        super().focusOutEvent(event)
-        if self.recording:
-            self.focus_lost.emit()
 
 
 class KeyList(QDialog):
@@ -378,21 +372,27 @@ class BindingEditor(QWidget):
         self.value.recorded.connect(self._do_edited)
         self.record = QPushButton(QIcon.fromTheme("media-record"), "Record")
         self.record.setCheckable(True)
+        # Keep focus in the field while recording, so key presses keep landing there.
+        self.record.setFocusPolicy(Qt.FocusPolicy.NoFocus)
         self.record.toggled.connect(self._record_toggled)
-        self.value.focus_lost.connect(lambda: self.record.setChecked(False))
         value_row = QWidget()
         vr = QHBoxLayout(value_row)
         vr.setContentsMargins(0, 0, 0, 0)
-        vr.addWidget(self.value, 1)
+        self.value.setMaximumWidth(340)
+        self.value.setClearButtonEnabled(True)
+        vr.addWidget(self.value)
         vr.addWidget(self.record)
         self.key_list_button = QPushButton(QIcon.fromTheme("input-keyboard"), "Keys…")
         self.key_list_button.clicked.connect(self._show_key_list)
+        self.key_list_button.setFocusPolicy(Qt.FocusPolicy.NoFocus)
         vr.addWidget(self.key_list_button)
+        vr.addStretch(1)
         # Apply while typing, so nothing is lost if Save is clicked straight after.
         # Errors only show once the field is left, not on every half-typed key.
         self.value.textEdited.connect(lambda _t: self._do_edited(quiet=True))
         self.value.editingFinished.connect(self._do_edited)
         self.value_hint = QLabel()
+        self.value_hint.setWordWrap(True)
         self.value_hint.setStyleSheet("color: palette(placeholder-text);")
         self.error = QLabel()
         self.error.setStyleSheet("color: #d24545;")
@@ -552,8 +552,8 @@ class BindingEditor(QWidget):
         if on:
             self.value.start()
             self.record.setText("Stop")
-            self.value_hint.setText("Recording. Press keys, then click Stop. "
-                                    "Some system shortcuts (like Meta+W) may be taken by Plasma; type those.")
+            self.value_hint.setText("Recording. Press keys, then click Stop. Shortcuts Plasma uses "
+                                    "(like Meta+W) may not reach Actuator; type or pick those instead.")
         else:
             self.value.stop()
             self.record.setText("Record")
@@ -585,8 +585,12 @@ class BindingEditor(QWidget):
         if mode == "Custom (YAML)":
             return
         try:
-            actions = build_actions(mode, {"on": self.stage.currentData(), "keys": self.value.text(),
-                                           "value": self.value.text()})
+            if not self.value.text().strip() and mode in ("Press keys", "Hold keys"):
+                # Cleared: keep the binding but make it do nothing, matching what's shown.
+                actions = [{"on": self.stage.currentData() or "begin", "input": [{"keyboard": []}]}]
+            else:
+                actions = build_actions(mode, {"on": self.stage.currentData(), "keys": self.value.text(),
+                                               "value": self.value.text()})
         except ValueError as e:
             if not quiet:
                 self.error.setText(str(e))
