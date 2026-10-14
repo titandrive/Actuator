@@ -1,6 +1,7 @@
 """Rendering the config in Actuator's layout, and saving it safely."""
 
 import io
+import json
 import os
 import shutil
 import re
@@ -90,7 +91,8 @@ def render(config: cfg.Config) -> str:
             (b for b in config.bindings if b.section == section),
             key=lambda b: (_scope_order(config, b), b.index),
         )
-        out.append("  gestures:" if bindings else "  gestures: []")
+        has_any = bindings or any(not isinstance(g, dict) for g in (body.get("gestures") or []))
+        out.append("  gestures:" if has_any else "  gestures: []")
         last_header = None
         for b in bindings:
             header = _scope_header(b)
@@ -102,6 +104,10 @@ def render(config: cfg.Config) -> str:
             if b.button:
                 out.append(f"  # {names.get(b.button) or d.button_label(b.button)}")
             out += _dump([d.plain(b.data)], "  ")
+        unknown = [g for g in (body.get("gestures") or []) if not isinstance(g, dict)]
+        if unknown:
+            out += ["", "  # Not understood by Actuator, kept as is", f"  # {'-' * 74}"]
+            out += _dump(unknown, "  ")
         out.append("")
 
     rest = {k: v for k, v in data.items() if k not in sections}
@@ -115,25 +121,23 @@ def render(config: cfg.Config) -> str:
     return "\n".join(out).rstrip("\n") + "\n"
 
 
-def expected_data(config: cfg.Config) -> dict:
-    """What the rendered file must parse back to: same data, gestures in written order."""
-    data = d.plain(config.data)
+def _normalized(data) -> dict:
+    """Data in an order-independent form: gestures sorted, empty sections made explicit,
+    so two configs compare equal exactly when they hold the same settings."""
+    data = d.plain(YAML(typ="safe").load(_roundtrip_plain(d.plain(data))) or {})
     for section in SECTION_ORDER:
         if section in data:
-            ordered = sorted(
-                (b for b in config.bindings if b.section == section),
-                key=lambda b: (_scope_order(config, b), b.index),
-            )
-            body = data[section] or {}
-            body["gestures"] = [d.plain(b.data) for b in ordered]
+            body = data[section] if isinstance(data[section], dict) else {}
+            gestures = body.get("gestures") or []
+            body["gestures"] = sorted(gestures, key=lambda g: json.dumps(g, sort_keys=True, default=str))
             data[section] = body
     return data
 
 
 def verify(config: cfg.Config, text: str) -> None:
-    parsed = d.plain(YAML(typ="safe").load(text))
-    expected = d.plain(YAML(typ="safe").load(_roundtrip_plain(expected_data(config))))
-    if parsed != expected:
+    """The rendered file must hold exactly the settings it was made from — nothing dropped,
+    nothing changed — compared against the original data, not Actuator's view of it."""
+    if _normalized(YAML(typ="safe").load(text)) != _normalized(config.data):
         raise ValueError("Rendered config doesn't match the data it was made from. Nothing was written.")
 
 
