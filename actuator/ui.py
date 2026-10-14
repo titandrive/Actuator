@@ -6,10 +6,10 @@ import subprocess
 from datetime import date, datetime
 from pathlib import Path
 
-from PySide6.QtCore import QFileSystemWatcher, QSettings, QSize, Qt, QTimer, Signal
+from PySide6.QtCore import QFileSystemWatcher, QPoint, QSettings, QSize, Qt, QTimer, Signal
 from PySide6.QtGui import QAction, QIcon, QKeySequence, QShortcut
 from PySide6.QtWidgets import (
-    QApplication, QDialog, QListWidget, QListWidgetItem, QFormLayout, QSpinBox, QDialogButtonBox, QFileDialog, QFrame, QGridLayout, QHBoxLayout,
+    QApplication, QDialog, QListWidget, QListWidgetItem, QToolTip, QFormLayout, QSpinBox, QDialogButtonBox, QFileDialog, QFrame, QGridLayout, QHBoxLayout,
     QCheckBox, QComboBox, QGroupBox, QInputDialog, QLabel, QLineEdit, QMainWindow, QMenu,
     QMessageBox, QPlainTextEdit, QPushButton, QScrollArea, QSizePolicy,
     QSplitter, QStackedWidget, QTabWidget, QToolBar, QToolButton, QTreeWidget,
@@ -17,12 +17,14 @@ from PySide6.QtWidgets import (
 )
 from ruamel.yaml import YAML
 
+from . import REPO_URL, __version__
 from . import apps as apps_mod
 from . import config as cfg
 from . import copying
 from . import describe as d
 from . import keys
 from . import writer
+from . import yaml_editor
 from . import devices as devices_mod
 from .editor import GESTURE_TYPES, BindingEditor, new_button_binding, new_gesture_binding
 
@@ -250,9 +252,18 @@ class SidebarTree(QTreeWidget):
             self.app_dropped.emit(p[1], self._target_folder(event.position().toPoint()))
 
 
+DEV_FEATURES = [  # (settings key, label, tooltip) — all off by default
+    ("device_settings", "Device settings", "Swipe angles, thresholds and timeouts for your devices."),
+    ("yaml_editor", "Full YAML editor", "Adds a YAML button to the toolbar to edit config.yaml directly."),
+    ("only_if", "Only if conditions", "Shows the condition builder in the binding editor."),
+]
+
+
 class OptionsDialog(QDialog):
     def __init__(self, parent, tabs: dict[str, bool], autostart: bool, keep: int):
         super().__init__(parent)
+        self.settings = parent.settings
+        self._version_clicks = 0
         self.setWindowTitle("Options")
         self.autostart = QCheckBox("Start InputActions when I log in")
         self.autostart.setChecked(autostart)
@@ -282,23 +293,68 @@ class OptionsDialog(QDialog):
         buttons = QDialogButtonBox(QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel)
         buttons.accepted.connect(self.accept)
         buttons.rejected.connect(self.reject)
-        devices = QPushButton(QIcon.fromTheme("input-mouse"), "Device settings…")
-        devices.clicked.connect(parent.open_device_settings)
-        dev_note = QLabel("Swipe angles, thresholds and timeouts. Most people never need these.")
-        dev_note.setWordWrap(True)
-        dev_note.setStyleSheet("color: palette(placeholder-text);")
-        adv = QGroupBox("Advanced")
-        al = QVBoxLayout(adv)
-        al.addWidget(devices, 0, Qt.AlignmentFlag.AlignLeft)
-        al.addWidget(dev_note)
         layout = QVBoxLayout(self)
         layout.addWidget(ia)
         layout.addWidget(backups)
         layout.addWidget(group)
-        layout.addWidget(adv)
+        self.dev_box = QGroupBox("Developer")
+        self.dev_layout = QVBoxLayout(self.dev_box)
+        self.features = {}
+        for key, label, note in DEV_FEATURES:
+            box = QCheckBox(label)
+            box.setChecked(self.settings.value(f"dev/{key}", False, type=bool))
+            box.setToolTip(note)
+            self.dev_layout.addWidget(box)
+            self.features[key] = box
+        devices = QPushButton(QIcon.fromTheme("input-mouse"), "Open device settings…")
+        devices.clicked.connect(parent.open_device_settings)
+        devices.setVisible(self.features["device_settings"].isChecked())
+        self.features["device_settings"].toggled.connect(devices.setVisible)
+        self.dev_layout.addWidget(devices, 0, Qt.AlignmentFlag.AlignLeft)
+        dev_off = QPushButton("Turn off developer mode")
+        dev_off.clicked.connect(lambda: self._set_dev_mode(False))
+        self.dev_layout.addWidget(dev_off, 0, Qt.AlignmentFlag.AlignLeft)
+        self.dev_box.setVisible(self.settings.value("dev_mode", False, type=bool))
+        layout.addWidget(self.dev_box)
         layout.addStretch(1)
+
+        # Footer: project link and version. Clicking the version ten times turns on developer mode.
+        footer = QHBoxLayout()
+        link = QLabel(f"<a href='{REPO_URL}'>GitHub</a>")
+        link.setOpenExternalLinks(True)
+        self.version = QLabel(f"Version {__version__}")
+        self.version.setStyleSheet("color: palette(placeholder-text);")
+        self.version.mousePressEvent = self._version_clicked
+        footer.addWidget(link)
+        footer.addStretch(1)
+        footer.addWidget(self.version)
+        layout.addLayout(footer)
         layout.addWidget(buttons)
         self.resize(320, 0)
+
+    def _toast(self, text: str):
+        """A small Android-style message just above the version label."""
+        pos = self.version.mapToGlobal(self.version.rect().topLeft())
+        QToolTip.showText(pos - QPoint(0, self.version.height() * 2), text, self.version, self.version.rect(), 1500)
+
+    def _version_clicked(self, _event):
+        if self.dev_box.isVisible():
+            self._toast("No need, you're already a developer.")
+            return
+        self._version_clicks += 1
+        left = 10 - self._version_clicks
+        if left <= 0:
+            self._set_dev_mode(True)
+            self._toast("You're now a developer!")
+        elif left <= 5:
+            self._toast(f"You're {left} step{'s' if left != 1 else ''} away from being a developer.")
+
+    def _set_dev_mode(self, on: bool):
+        self.settings.setValue("dev_mode", on)
+        self._version_clicks = 0
+        self.dev_box.setVisible(on)
+        self.version.setText(f"Version {__version__}" + ("  · developer mode" if on else ""))
+        self.adjustSize()
 
     def _explain_autostart(self):
         box = QMessageBox(self)
@@ -521,6 +577,7 @@ class MainWindow(QMainWindow):
         split.setStretchFactor(1, 1)
         self.setCentralWidget(split)
 
+        self._apply_features()
         self.watcher = QFileSystemWatcher()
         self.watcher.fileChanged.connect(lambda _p: QTimer.singleShot(300, self._file_changed))
         self.load()
@@ -544,6 +601,8 @@ class MainWindow(QMainWindow):
         bar.addWidget(spacer)
 
         # Right: options, backups, then Reload and Save together, Save last.
+        self.yaml_action = bar.addAction(QIcon.fromTheme("text-x-script"), "YAML", self.open_yaml_editor)
+        self.yaml_action.setToolTip("Edit config.yaml directly (developer)")
         bar.addAction(QIcon.fromTheme("configure"), "Options", self.show_options)
         backup = QMenu(self)
         backup.addAction(QIcon.fromTheme("document-export"), "Export YAML", self.export_yaml)
@@ -598,7 +657,32 @@ class MainWindow(QMainWindow):
                 QMessageBox.warning(self, "Actuator", f"Couldn't change the InputActions setting.\n\n{out}")
         for title, on in dialog.tabs().items():
             self.settings.setValue(f"tabs/{title}", on)
+        for key, box in dialog.features.items():
+            self.settings.setValue(f"dev/{key}", box.isChecked())
+        self._apply_features()
         self._fill_sidebar()
+
+    def feature(self, key: str) -> bool:
+        """A developer feature is on only while developer mode is on too."""
+        return (self.settings.value("dev_mode", False, type=bool)
+                and self.settings.value(f"dev/{key}", False, type=bool))
+
+    def _apply_features(self):
+        self.yaml_action.setVisible(self.feature("yaml_editor"))
+
+    def open_yaml_editor(self):
+        if not self._ask_discard("edit the YAML"):
+            return
+        path = cfg.CONFIG_PATH
+        editor = yaml_editor.YamlEditor(self, path, path.read_text())
+        if editor.exec() != QDialog.DialogCode.Accepted:
+            return
+        text = editor.text()
+        self._last_written = text
+        previous = writer.snapshot(path)
+        writer.write_atomic(path, text)
+        self.dirty = False
+        self._after_write(previous)
 
     def open_device_settings(self):
         if not devices_mod.confirm_open(self, self.settings):
@@ -1078,6 +1162,8 @@ class MainWindow(QMainWindow):
                 p = item.data(0, ROLE)
                 for col, text in enumerate(row_text(p)):
                     item.setText(col, text)
+        page.editor.show_conditions = self.feature("only_if")
+        page._selected(page.tree.currentItem(), None)  # the first row was shown before this was set
         page.editor.changed.connect(changed)
         page.editor.structure_changed.connect(lambda: self._refresh())
         page.tree.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)

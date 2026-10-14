@@ -478,6 +478,7 @@ class BindingEditor(QWidget):
         self.config = config
         self.binding: cfg.Binding | None = None
         self._loading = False
+        self.show_conditions = True  # the Only if builder (a developer option in the app)
 
         self.title = QLabel()
         self.title.setStyleSheet("font-weight: 600;")
@@ -620,8 +621,9 @@ class BindingEditor(QWidget):
         self.title.setText(title)
         self._shown_gesture = d.gesture_title(g)
         self.bind_button.setVisible(False)
-        for w in (self.when_box, self.cond_box, self.do_box, self.yaml_button, self.delete_button):
+        for w in (self.when_box, self.do_box, self.yaml_button, self.delete_button):
             w.setVisible(True)
+        self.cond_box.setVisible(self.show_conditions)
         self.yaml_box.setVisible(self.yaml_button.isChecked())
 
         self.trigger_label.setText(" · ".join(d.trigger_parts({"type": t, **{
