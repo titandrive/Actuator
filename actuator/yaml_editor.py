@@ -1,5 +1,6 @@
 """Editing config.yaml directly, with live YAML checking."""
 
+import html
 import subprocess
 
 from PySide6.QtCore import QFileSystemWatcher, QPointF, QTimer, QUrl
@@ -8,6 +9,8 @@ from PySide6.QtWidgets import (
     QDialog, QDialogButtonBox, QHBoxLayout, QLabel, QPlainTextEdit, QPushButton, QVBoxLayout,
 )
 from ruamel.yaml import YAML
+
+from . import icons
 
 
 def _code(line: str) -> str:
@@ -201,10 +204,10 @@ class YamlEditor(QDialog):
         row.addWidget(self.status, 1)
         row.addWidget(self.go_to)
         self.path = path
-        open_ext = QPushButton(QIcon.fromTheme("document-edit"), "Open in text editor")
+        open_ext = QPushButton(icons.icon("document-edit"), "Open in text editor")
         open_ext.setToolTip("Open the file in your default editor for YAML files")
         open_ext.clicked.connect(lambda: open_external(path))
-        reveal_button = QPushButton(QIcon.fromTheme("folder-open"), "Show in folder")
+        reveal_button = QPushButton(icons.icon("folder-open"), "Show in folder")
         reveal_button.clicked.connect(lambda: reveal(path))
         self.buttons.addButton(open_ext, QDialogButtonBox.ButtonRole.ActionRole)
         self.buttons.addButton(reveal_button, QDialogButtonBox.ButtonRole.ActionRole)
@@ -246,7 +249,7 @@ class YamlEditor(QDialog):
         else:
             self.original = disk
             self._validate()
-            self.status.setText("⚠ The file was changed in another editor. Saving here will overwrite "
+            self.status.setText(icons.img("triangle-alert", "#d24545") + " The file was changed in another editor. Saving here will overwrite "
                                 "those changes.")
             self.status.setStyleSheet("color: #d24545;")
 
@@ -257,7 +260,8 @@ class YamlEditor(QDialog):
         ok, message, line = check(self.text())
         self._error_line = line
         changed = self.text() != self.original
-        self.status.setText(message if ok or not changed else f"⚠ {message}")
+        self.status.setText(html.escape(message) if ok or not changed
+                            else icons.img("triangle-alert", "#d24545") + " " + html.escape(message).replace("\n", "<br>"))
         self.status.setStyleSheet("" if ok else "color: #d24545;")
         self.go_to.setVisible(line is not None)
         self.buttons.button(QDialogButtonBox.StandardButton.Save).setEnabled(ok and changed)

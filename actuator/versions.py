@@ -11,6 +11,7 @@ from PySide6.QtWidgets import (
     QSplitter, QTextBrowser, QVBoxLayout, QWidget,
 )
 
+from . import icons
 from . import config as cfg
 from . import diffing
 from . import writer
@@ -80,19 +81,21 @@ class VersionsDialog(QDialog):
         split.addWidget(right)
         split.setSizes([240, 480])
 
-        from_file = QPushButton(QIcon.fromTheme("document-import"), "Restore from file…")
+        from_file = QPushButton(icons.icon("document-import"), "Restore from file…")
         from_file.clicked.connect(self._from_file)
         open_menu = QMenu(self)
-        open_menu.addAction(QIcon.fromTheme("text-x-script"), "View YAML", self._view)
-        open_menu.addAction(QIcon.fromTheme("document-edit"), "Open in text editor",
+        open_menu.addAction(icons.icon("text-x-script"), "View YAML", self._view)
+        open_menu.addAction(icons.icon("document-edit"), "Open in text editor",
                             lambda: self._path() and yaml_editor.open_external(self._path()))
-        open_menu.addAction(QIcon.fromTheme("folder-open"), "Show in folder",
+        open_menu.addAction(icons.icon("folder-open"), "Show in folder",
                             lambda: self._path() and yaml_editor.reveal(self._path()))
-        self.open = QPushButton(QIcon.fromTheme("document-open"), "Open")
+        self.open = QPushButton(icons.icon("document-open"), "Open")
         self.open.setMenu(open_menu)
-        self.delete = QPushButton(QIcon.fromTheme("edit-delete"), "Delete")
+        self.lock = QPushButton()
+        self.lock.clicked.connect(self._toggle_lock)
+        self.delete = QPushButton(icons.icon("edit-delete"), "Delete")
         self.delete.clicked.connect(self._delete)
-        self.restore = QPushButton(QIcon.fromTheme("document-revert"), "Restore")
+        self.restore = QPushButton(icons.icon("document-revert"), "Restore")
         self.restore.setDefault(True)
         self.restore.clicked.connect(self._restore)
         close = QPushButton("Close")
@@ -103,6 +106,7 @@ class VersionsDialog(QDialog):
         buttons = QHBoxLayout()
         buttons.addWidget(from_file)
         buttons.addWidget(self.open)
+        buttons.addWidget(self.lock)
         buttons.addWidget(self.delete)
         buttons.addStretch(1)
         buttons.addWidget(self.restore)
@@ -122,6 +126,8 @@ class VersionsDialog(QDialog):
             except OSError:
                 broken = True
             item = QListWidgetItem(label)
+            if writer.is_locked(path):
+                item.setIcon(icons.lucide("lock"))
             item.setData(Qt.ItemDataRole.UserRole, str(path))
             if broken:  # red is enough; the preview explains the error
                 item.setForeground(QColor(COLORS["−"]))
@@ -133,6 +139,7 @@ class VersionsDialog(QDialog):
             self.restore.setEnabled(False)
             self.delete.setEnabled(False)
             self.open.setEnabled(False)
+            self.lock.setEnabled(False)
             return
         row = next((i for i in range(self.list.count())
                     if keep and self.list.item(i).data(Qt.ItemDataRole.UserRole) == str(keep)), 0)
@@ -145,10 +152,17 @@ class VersionsDialog(QDialog):
     def _preview(self, item):
         path = self._path()
         self.restore.setEnabled(path is not None)
-        self.delete.setEnabled(path is not None)
         self.open.setEnabled(path is not None)
+        self.lock.setEnabled(path is not None)
         if not path:
             return
+        locked = writer.is_locked(path)
+        self.lock.setText("Unlock" if locked else "Lock")
+        self.lock.setIcon(icons.icon("object-unlocked" if locked else "object-locked"))
+        self.lock.setToolTip("Locked versions are never deleted until you unlock them" if not locked
+                             else "Let this version be deleted again")
+        self.delete.setEnabled(not locked)  # locked versions are protected
+        self.delete.setToolTip("Unlock it to delete" if locked else "")
         self.title.setText(item.text())
         try:
             text = path.read_text()
@@ -165,6 +179,12 @@ class VersionsDialog(QDialog):
         groups = diffing.changes(self.current, cfg.loads(text, path)) if self.current else None
         intro = "<p>Restoring makes these changes to your config:</p>" if groups else ""
         self.view.setHtml(intro + changes_html(groups, self.palette()))
+
+    def _toggle_lock(self):
+        path = self._path()
+        if path:
+            writer.set_locked(path, not writer.is_locked(path))
+            self._fill(keep=path)
 
     def _view(self):
         path = self._path()
@@ -185,7 +205,7 @@ class VersionsDialog(QDialog):
 
     def _delete(self):
         path = self._path()
-        if not path:
+        if not path or writer.is_locked(path):
             return
         is_original = path == writer.original_path(cfg.CONFIG_PATH)
         warning = ("This is your config from before you started using Actuator. "

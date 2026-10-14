@@ -169,8 +169,47 @@ def snapshot(path: Path) -> Path | None:
 
 
 def prune() -> None:
-    for old in snapshots()[SNAPSHOT_KEEP:]:
+    """Delete the oldest versions beyond the limit. Locked ones are kept and don't count."""
+    unlocked = [x for x in snapshots() if not is_locked(x)]
+    for old in unlocked[SNAPSHOT_KEEP:]:
         old.unlink()
+
+
+# Locked versions, listed in a small file next to the snapshots. The pre-Actuator original
+# lives with the config, and is locked unless someone unlocks it.
+def _locks_file() -> Path:
+    return SNAPSHOT_DIR / "locked.json"
+
+
+def _locks() -> dict:
+    try:
+        data = json.loads(_locks_file().read_text())
+        return data if isinstance(data, dict) else {}
+    except (OSError, ValueError):
+        return {}
+
+
+def _lock_key(path: Path) -> str:
+    return "original" if path.name.endswith(".original") else path.name
+
+
+def is_locked(path: Path) -> bool:
+    key, locks = _lock_key(path), _locks()
+    if key == "original":
+        return locks.get("original", True)
+    return key in locks.get("snapshots", [])
+
+
+def set_locked(path: Path, on: bool) -> None:
+    key, locks = _lock_key(path), _locks()
+    if key == "original":
+        locks["original"] = on
+    else:
+        names = set(locks.get("snapshots", []))
+        (names.add if on else names.discard)(key)
+        locks["snapshots"] = sorted(names)
+    SNAPSHOT_DIR.mkdir(parents=True, exist_ok=True)
+    _locks_file().write_text(json.dumps(locks, indent=2) + "\n")
 
 
 def snapshots() -> list[Path]:

@@ -13,6 +13,7 @@ from PySide6.QtWidgets import (
 )
 from ruamel.yaml import YAML
 
+from . import icons
 from . import config as cfg
 from . import describe as d
 
@@ -225,7 +226,7 @@ class AddDeviceDialog(QDialog):
             self.tree.addTopLevelItem(top)
             for n in names:
                 item = QTreeWidgetItem([n])
-                item.setIcon(0, QIcon.fromTheme(icon))
+                item.setIcon(0, icons.icon(icon))
                 item.setData(0, Qt.ItemDataRole.UserRole, (t, n))
                 if n in taken:
                     item.setFlags(Qt.ItemFlag.NoItemFlags)
@@ -270,7 +271,7 @@ class SettingRow(QWidget):
         text.setWordWrap(True)
         self.state = QLabel()
         self.state.setFixedWidth(60)
-        self.reset_button = QToolButton(icon=QIcon.fromTheme("edit-undo"))
+        self.reset_button = QToolButton(icon=icons.icon("edit-undo"))
         self.reset_button.setAutoRaise(True)
         self.reset_button.setToolTip("Reset to default")
         self.reset_button.clicked.connect(self.reset.emit)
@@ -336,12 +337,12 @@ class DeviceSettingsPage(QWidget):
         self.tree.setHeaderHidden(True)
         self.tree.setRootIsDecorated(False)
         self.tree.currentItemChanged.connect(lambda item, _p: self._show(item))
-        add = QPushButton(QIcon.fromTheme("list-add"), "Device-specific settings…")
+        add = QPushButton(icons.icon("list-add"), "Device-specific settings…")
         add.clicked.connect(self._add_device)
         left = QWidget()
         ll = QVBoxLayout(left)
         ll.setContentsMargins(0, 0, 0, 0)
-        reset_all = QPushButton(QIcon.fromTheme("edit-clear-all"), "Reset all to defaults")
+        reset_all = QPushButton(icons.icon("edit-clear-all"), "Reset all to defaults")
         reset_all.clicked.connect(self._reset_all)
         ll.addWidget(self.tree)
         ll.addWidget(add)
@@ -365,7 +366,7 @@ class DeviceSettingsPage(QWidget):
 
         def entry(text, icon, payload, dim=False):
             item = QTreeWidgetItem([text])
-            item.setIcon(0, QIcon.fromTheme(icon))
+            item.setIcon(0, icons.icon(icon))
             item.setData(0, Qt.ItemDataRole.UserRole, payload)
             if dim:
                 item.setForeground(0, self.palette().placeholderText())
@@ -415,7 +416,7 @@ class DeviceSettingsPage(QWidget):
         title.setStyleSheet("font-weight: 600; font-size: 14px;")
         head.addWidget(title, 1)
         if target[0] == "name":
-            remove = QPushButton(QIcon.fromTheme("edit-delete"), "Remove")
+            remove = QPushButton(icons.icon("edit-delete"), "Remove")
             remove.clicked.connect(lambda: self._remove_device(target[1]))
             head.addWidget(remove)
         layout.addLayout(head)

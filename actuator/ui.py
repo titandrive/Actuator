@@ -23,6 +23,7 @@ from PySide6.QtWidgets import (
 from PySide6.QtSvg import QSvgRenderer
 from ruamel.yaml import YAML
 
+from . import icons
 from . import REPO_URL, __version__
 from . import apps as apps_mod
 from . import config as cfg
@@ -146,7 +147,7 @@ class AddAppDialog(QDialog):
         self.list = QListWidget()
         self.list.setIconSize(self.list.iconSize().expandedTo(QSize(24, 24)))
         for app in apps_mod.installed():
-            item = QListWidgetItem(QIcon.fromTheme(app.icon, QIcon.fromTheme("application-x-executable")), app.name)
+            item = QListWidgetItem(icons.icon(app.icon, icons.icon("application-x-executable")), app.name)
             item.setData(Qt.ItemDataRole.UserRole, app.window_class)
             item.setToolTip(f"Window class: {app.window_class}")
             if app.window_class.lower() in existing:
@@ -155,7 +156,7 @@ class AddAppDialog(QDialog):
             self.list.addItem(item)
         self.list.itemDoubleClicked.connect(lambda *_: self._accept())
         self.list.currentItemChanged.connect(lambda item, _p: item and self.edit.clear())
-        self.pick = QPushButton(QIcon.fromTheme("crosshairs"), "Pick window")
+        self.pick = QPushButton(icons.icon("crosshairs"), "Pick window")
         self.pick.setToolTip("Click a running app's window to use exactly what it reports. "
                              "Most reliable for games.")
         self.pick.clicked.connect(self._start_pick)
@@ -465,7 +466,7 @@ class OptionsDialog(QDialog):
         # General
         general = Card("General")
         self.autostart = Toggle(autostart)
-        info = QToolButton(icon=QIcon.fromTheme("help-about-symbolic", QIcon.fromTheme("dialog-information")))
+        info = QToolButton(icon=icons.icon("help-about-symbolic", icons.icon("dialog-information")))
         info.setAutoRaise(True)
         info.setToolTip("How autostart works")
         info.clicked.connect(self._explain_autostart)
@@ -517,9 +518,8 @@ class OptionsDialog(QDialog):
         push_row.addWidget(self.git_push)
         gl.addLayout(push_row)
         st = gitsync.status(cfg.CONFIG_PATH)
-        ok_mark, bad_mark, warn_mark = ("<span style='color:#2e9e5b'>✓</span>",
-                                        "<span style='color:#d24545'>✗</span>",
-                                        "<span style='color:#c58a00'>⚠</span>")
+        ok_mark, bad_mark, warn_mark = (icons.img("check", "#2e9e5b"), icons.img("x", "#d24545"),
+                                        icons.img("triangle-alert", "#c58a00"))
         rows = [f"{ok_mark if st['git'] else bad_mark} Git is installed"]
         if st["git"]:
             rows.append(f"{ok_mark} Repository: {html.escape(str(st['repo']))}"
@@ -893,9 +893,9 @@ class MainWindow(QMainWindow):
         sl.setContentsMargins(0, 0, 0, 0)
         sl.addWidget(self.sidebar)
         add_row = QHBoxLayout()
-        add_app = QPushButton(QIcon.fromTheme("list-add"), "Add app")
+        add_app = QPushButton(icons.icon("list-add"), "Add app")
         add_app.clicked.connect(self.add_app)
-        new_folder = QPushButton(QIcon.fromTheme("folder-new"), "New folder")
+        new_folder = QPushButton(icons.icon("folder-new"), "New folder")
         new_folder.clicked.connect(lambda: self.new_folder())
         add_row.addWidget(add_app)
         add_row.addWidget(new_folder)
@@ -943,32 +943,32 @@ class MainWindow(QMainWindow):
         bar.addWidget(spacer)
 
         # Right: undo, redo and reload as icons; everything occasional in the ☰ menu; Save last.
-        self.undo_action = bar.addAction(_dimmable(QIcon.fromTheme("edit-undo")), "Undo", self.undo)
+        self.undo_action = bar.addAction(_dimmable(icons.icon("edit-undo")), "Undo", self.undo)
         self.undo_action.setToolTip("Undo the last unsaved change (Ctrl+Z)")
-        self.redo_action = bar.addAction(_dimmable(QIcon.fromTheme("edit-redo")), "Redo", self.redo)
+        self.redo_action = bar.addAction(_dimmable(icons.icon("edit-redo")), "Redo", self.redo)
         self.redo_action.setToolTip("Redo (Ctrl+Shift+Z)")
         # Window-wide, so a focused text box still gets its own Ctrl+Z first.
         QShortcut(QKeySequence.StandardKey.Undo, self, self.undo)
         QShortcut(QKeySequence.StandardKey.Redo, self, self.redo)
-        reload = bar.addAction(QIcon.fromTheme("view-refresh"), "Reload", self.reload)
+        reload = bar.addAction(icons.icon("view-refresh"), "Reload", self.reload)
         reload.setToolTip("Reload config.yaml and InputActions")
         bar.widgetForAction(reload).setToolButtonStyle(Qt.ToolButtonStyle.ToolButtonTextBesideIcon)
         bar.addSeparator()
 
         menu = QMenu(self)
-        menu.addAction(QIcon.fromTheme("configure"), "Options", self.show_options)
-        self.yaml_action = menu.addAction(QIcon.fromTheme("text-x-script"), "Edit YAML", self.open_yaml_editor)
+        menu.addAction(icons.icon("configure"), "Options", self.show_options)
+        self.yaml_action = menu.addAction(icons.icon("text-x-script"), "Edit YAML", self.open_yaml_editor)
         menu.addSeparator()
-        menu.addAction(QIcon.fromTheme("document-export"), "Export YAML", self.export_yaml)
-        menu.addAction(QIcon.fromTheme("document-revert"), "Restore", self.open_versions)
-        hamburger = QToolButton(icon=QIcon.fromTheme("application-menu", QIcon.fromTheme("open-menu-symbolic")))
+        menu.addAction(icons.icon("document-export"), "Export YAML", self.export_yaml)
+        menu.addAction(icons.icon("document-revert"), "Restore", self.open_versions)
+        hamburger = QToolButton(icon=icons.icon("application-menu", icons.icon("open-menu-symbolic")))
         hamburger.setToolTip("Menu")
         # Open the menu by hand: attaching it to the button would reserve room for a dropdown
         # arrow and push the icon off-center.
         hamburger.clicked.connect(lambda: menu.exec(hamburger.mapToGlobal(hamburger.rect().bottomLeft())))
         bar.addWidget(hamburger)
 
-        self.save_button = QPushButton(QIcon.fromTheme("document-save"), "Save")
+        self.save_button = QPushButton(icons.icon("document-save"), "Save")
         self.save_button.setToolTip("Save binding changes and reload InputActions (Ctrl+S)")
         # Highlighted only when there's something to save; otherwise it's a plain, disabled button.
         self.save_button.setStyleSheet(
@@ -981,7 +981,7 @@ class MainWindow(QMainWindow):
         self._update_toggle()
 
     def _menu_button(self, text: str, icon: str, menu: QMenu) -> QToolButton:
-        b = QToolButton(text=text, icon=QIcon.fromTheme(icon))
+        b = QToolButton(text=text, icon=icons.icon(icon))
         b.setToolButtonStyle(Qt.ToolButtonStyle.ToolButtonTextBesideIcon)
         b.setPopupMode(QToolButton.ToolButtonPopupMode.InstantPopup)
         b.setMenu(menu)
@@ -1065,18 +1065,18 @@ class MainWindow(QMainWindow):
                           "QFrame#broken QLabel { background: transparent; border: none; }")
         outer.addWidget(bar)
         icon = QLabel()
-        icon.setPixmap(QIcon.fromTheme("dialog-error").pixmap(22, 22))
+        icon.setPixmap(icons.lucide("circle-x", "#d24545").pixmap(22, 22))
         title = QLabel("config.yaml can't be read. Nothing will be saved until it's fixed.")
         title.setStyleSheet("font-weight: 600;")
         self.broken_label = QLabel()
         self.broken_label.setWordWrap(True)
         self.broken_label.setTextFormat(Qt.TextFormat.RichText)
         self.broken_label.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
-        edit = QPushButton(QIcon.fromTheme("text-x-script"), "Edit in YAML editor")
+        edit = QPushButton(icons.icon("text-x-script"), "Edit in YAML editor")
         edit.clicked.connect(lambda: self.open_yaml_editor(force=True))
-        ext = QPushButton(QIcon.fromTheme("document-edit"), "Open in text editor")
+        ext = QPushButton(icons.icon("document-edit"), "Open in text editor")
         ext.clicked.connect(lambda: QDesktopServices.openUrl(QUrl.fromLocalFile(str(cfg.CONFIG_PATH))))
-        restore = QPushButton(QIcon.fromTheme("document-open-recent"), "Restore a previous version")
+        restore = QPushButton(icons.icon("document-open-recent"), "Restore a previous version")
         restore.clicked.connect(self.open_versions)
 
         text = QVBoxLayout()
@@ -1157,18 +1157,19 @@ class MainWindow(QMainWindow):
 
     def _update_toggle(self):
         self.toggle_action.setText("Stop" if self.running else "Start")
-        self.toggle_action.setIcon(QIcon.fromTheme(
+        self.toggle_action.setIcon(icons.icon(
             "media-playback-pause" if self.running else "media-playback-start"))
         self.toggle_action.setToolTip("Pause InputActions" if self.running else "Start InputActions")
         self._update_status()
 
     def _update_status(self):
-        state = ("<span style='color:#2e9e5b'>● Running</span>" if self.running
-                 else "<span style='color:#c58a00'>● Stopped</span>" if self.loaded
-                 else "<span style='color:#c58a00'>● Not loaded</span>")
+        word, color = (("Running", "#2e9e5b") if self.running else ("Stopped", "#c58a00") if self.loaded
+                       else ("Not loaded", "#c58a00"))
+        state = f"{icons.img('circle', color, 10, filled=True)} <span style='color:{color}'>{word}</span>"
         self.status.setText(f"<b>InputActions</b> &nbsp; {state}")
         self.issues_action.setVisible(bool(self._issues))  # only worth showing when something's wrong
-        self.issues_label.setText("<span style='color:#d24545'>⚠ Config issues</span>")
+        self.issues_label.setText(f"{icons.img('triangle-alert', '#d24545')} "
+                                  "<span style='color:#d24545'>Config issues</span>")
         self.issues_label.setToolTip(self._issues)
         self.save_button.setEnabled(self.dirty and getattr(self, "broken", None) is None)
         self.save_button.setToolTip("Save binding changes and reload InputActions (Ctrl+S)" if self.dirty
@@ -1409,8 +1410,8 @@ class MainWindow(QMainWindow):
         state: ok, busy, error, or warn. A link makes the message open it when clicked."""
         color = {"ok": "#2e9e5b", "busy": self.palette().placeholderText().color().name(),
                  "error": "#d24545", "warn": "#c58a00"}[state]
-        icon = {"ok": "✓", "busy": "⏳", "error": "✗", "warn": "⚠"}[state]
-        body = f"{icon} {html.escape(text)}"
+        glyph = {"ok": "check", "busy": "hourglass", "error": "circle-x", "warn": "triangle-alert"}[state]
+        body = f"{icons.img(glyph, color)} {html.escape(text)}"
         if link:
             body = (f"<a href='{html.escape(link)}' style='color:{color}; text-decoration:none'>"
                     f"{body}</a>")
@@ -1532,7 +1533,7 @@ class MainWindow(QMainWindow):
             item.setForeground(1, self.palette().placeholderText())
             item.setTextAlignment(1, Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
             item.setToolTip(1, "Bindings")
-            item.setIcon(0, QIcon.fromTheme(icon, QIcon.fromTheme("application-x-executable")))
+            item.setIcon(0, icons.icon(icon, icons.icon("application-x-executable")))
             item.setData(0, ROLE, payload)
             flags = Qt.ItemFlag.ItemIsEnabled | Qt.ItemFlag.ItemIsSelectable
             if isinstance(payload, tuple) and payload[0] == "app":
@@ -1554,7 +1555,7 @@ class MainWindow(QMainWindow):
             for app in shown:
                 items[("app", app)] = entry(apps_mod.display_name(app), apps_mod.icon_name(app), ("app", app), f)
             f.setExpanded(folder not in collapsed)
-            f.setIcon(0, QIcon.fromTheme("folder-open" if f.isExpanded() else "folder"))
+            f.setIcon(0, icons.icon("folder-open" if f.isExpanded() else "folder"))
         for app in apps:
             if not self.config.folder_of(app):
                 items[("app", app)] = entry(apps_mod.display_name(app), apps_mod.icon_name(app), ("app", app))
@@ -1565,7 +1566,7 @@ class MainWindow(QMainWindow):
         p = item.data(0, ROLE)
         if not (isinstance(p, tuple) and p[0] == "folder"):
             return
-        item.setIcon(0, QIcon.fromTheme("folder-open" if expanded else "folder"))
+        item.setIcon(0, icons.icon("folder-open" if expanded else "folder"))
         collapsed = set(self.settings.value("sidebar/collapsed", [], type=list) or [])
         (collapsed.discard if expanded else collapsed.add)(p[1])
         self.settings.setValue("sidebar/collapsed", sorted(collapsed))
@@ -1593,7 +1594,7 @@ class MainWindow(QMainWindow):
         menu = QMenu(self)
         if isinstance(payload, tuple) and payload[0] == "app":
             app = payload[1]
-            move = menu.addMenu(QIcon.fromTheme("folder"), "Move to folder")
+            move = menu.addMenu(icons.icon("folder"), "Move to folder")
             current = self.config.folder_of(app)
             for folder in self.config.folders:
                 a = move.addAction(folder, lambda f=folder: self.move_app(app, f))
@@ -1601,32 +1602,32 @@ class MainWindow(QMainWindow):
                 a.setChecked(folder == current)
             if self.config.folders:
                 move.addSeparator()
-            move.addAction(QIcon.fromTheme("folder-new"), "New folder…", lambda: self.new_folder(app))
+            move.addAction(icons.icon("folder-new"), "New folder…", lambda: self.new_folder(app))
             if current:
                 menu.addAction(f"Take out of {current}", lambda: self.move_app(app, None))
             self._add_copy_all(menu, ("app", app))
             menu.addSeparator()
-            menu.addAction(QIcon.fromTheme("list-remove"), f"Remove {apps_mod.display_name(app)}…",
+            menu.addAction(icons.icon("list-remove"), f"Remove {apps_mod.display_name(app)}…",
                            lambda: self.remove_app(app))
         elif payload == ("global", None):
             self._add_copy_all(menu, ("global", None))
         elif isinstance(payload, tuple) and payload[0] == "folder":
             folder = payload[1]
-            menu.addAction(QIcon.fromTheme("edit-rename"), "Rename…", lambda: self.rename_folder(folder))
-            menu.addAction(QIcon.fromTheme("edit-delete"), "Delete folder", lambda: self.delete_folder(folder))
+            menu.addAction(icons.icon("edit-rename"), "Rename…", lambda: self.rename_folder(folder))
+            menu.addAction(icons.icon("edit-delete"), "Delete folder", lambda: self.delete_folder(folder))
         else:
-            menu.addAction(QIcon.fromTheme("list-add"), "Add app…", self.add_app)
-            menu.addAction(QIcon.fromTheme("folder-new"), "New folder…", lambda: self.new_folder())
+            menu.addAction(icons.icon("list-add"), "Add app…", self.add_app)
+            menu.addAction(icons.icon("folder-new"), "New folder…", lambda: self.new_folder())
         menu.exec(self.sidebar.viewport().mapToGlobal(pos))
 
     def _add_copy_all(self, menu: QMenu, source):
         items = [(b.section, d.plain(b.data)) for b in self.config.bindings_for(*source)]
-        to = menu.addMenu(QIcon.fromTheme("edit-copy"), "Copy all bindings to")
+        to = menu.addMenu(icons.icon("edit-copy"), "Copy all bindings to")
         to.setEnabled(bool(items))
         for scope, app, label in self._targets(source):
             to.addAction(label, lambda s=scope, a=app: self._copy_into(items, s, a))
         to.addSeparator()
-        to.addAction(QIcon.fromTheme("list-add"), "New app…", lambda: self._copy_to_new_app(items))
+        to.addAction(icons.icon("list-add"), "New app…", lambda: self._copy_to_new_app(items))
 
     def _ask_folder_name(self, title: str, text: str = "") -> str | None:
         name, ok = QInputDialog.getText(self, title, "Folder name:", text=text)
@@ -1769,25 +1770,25 @@ class MainWindow(QMainWindow):
         binding = p.get("binding") if isinstance(p, dict) else None
         menu = QMenu(self)
         if binding:
-            menu.addAction(QIcon.fromTheme("edit-copy"), "Copy", lambda: self._copy_binding(item))
-            to = menu.addMenu(QIcon.fromTheme("go-next"), "Copy to")
+            menu.addAction(icons.icon("edit-copy"), "Copy", lambda: self._copy_binding(item))
+            to = menu.addMenu(icons.icon("go-next"), "Copy to")
             for scope, app, label in self._targets(self.current):
                 to.addAction(label, lambda s=scope, a=app: self._copy_into([(binding.section, binding.data)], s, a))
             to.addSeparator()
-            to.addAction(QIcon.fromTheme("list-add"), "New app…",
+            to.addAction(icons.icon("list-add"), "New app…",
                          lambda: self._copy_to_new_app([(binding.section, binding.data)]))
         elif isinstance(p, dict) and p.get("bind"):
-            menu.addAction(QIcon.fromTheme("list-add"), "Bind an action", p["bind"])
+            menu.addAction(icons.icon("list-add"), "Bind an action", p["bind"])
         if self._clipboard:
-            menu.addAction(QIcon.fromTheme("edit-paste"), "Paste", self._paste_here)
+            menu.addAction(icons.icon("edit-paste"), "Paste", self._paste_here)
         if menu.isEmpty():
             menu.addAction("Nothing to copy here").setEnabled(False)
         if item and item.flags() & Qt.ItemFlag.ItemIsEditable:
             menu.addSeparator()
-            menu.addAction(QIcon.fromTheme("edit-rename"), "Rename…", lambda: page.tree.editItem(item, 0))
+            menu.addAction(icons.icon("edit-rename"), "Rename…", lambda: page.tree.editItem(item, 0))
         if binding:
             menu.addSeparator()
-            menu.addAction(QIcon.fromTheme("edit-delete"), "Delete", page.editor._delete)
+            menu.addAction(icons.icon("edit-delete"), "Delete", page.editor._delete)
         menu.exec(page.tree.viewport().mapToGlobal(pos))
 
     def _copy_binding(self, item):
@@ -1873,7 +1874,7 @@ class MainWindow(QMainWindow):
             for b in gestures:
                 title = d.gesture_title(b.data)
                 page.add_row([title, d.summary(b)], {"title": f"{title} in {where}", "binding": b})
-        add = QPushButton(QIcon.fromTheme("media-record"), "Add button binding")
+        add = QPushButton(icons.icon("media-record"), "Add button binding")
         add.setToolTip("Press the mouse button you want to bind")
         add.clicked.connect(lambda: self.add_button(scope, app))
         page.add_button(add)

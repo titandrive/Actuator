@@ -11,6 +11,7 @@ from PySide6.QtWidgets import (
 )
 from ruamel.yaml import YAML
 
+from . import icons
 from . import apps
 from . import conditions as conds
 from . import config as cfg
@@ -378,7 +379,7 @@ class ConditionBuilder(QWidget):
         mr.addWidget(self.mode)
         mr.addStretch(1)
         self.rows_box = QVBoxLayout()
-        add = QPushButton(QIcon.fromTheme("list-add"), "Add condition")
+        add = QPushButton(icons.icon("list-add"), "Add condition")
         add.clicked.connect(self._add)
         self.summary = QLabel()
         self.summary.setWordWrap(True)
@@ -409,7 +410,7 @@ class ConditionBuilder(QWidget):
         self.app, mode, self.rows = parts[0], parts[1], list(parts[2])
         self.locked.setVisible(bool(self.app))
         if self.app:
-            self.locked.setText(f"🔒 {d.condition(self.app)}  <span style='color:palette(placeholder-text)'>"
+            self.locked.setText(f"{icons.img('lock')} {d.condition(self.app)}  <span style='color:palette(placeholder-text)'>"
                                 "(from the sidebar)</span>")
         self.mode_prefix.setText("and" if self.app else "When")
         self.mode.blockSignals(True)
@@ -460,7 +461,7 @@ class ConditionBuilder(QWidget):
             h.addWidget(value_widget)
         if value_widget is None or isinstance(value_widget, QComboBox):
             h.addStretch(1)
-        remove = QToolButton(icon=QIcon.fromTheme("edit-delete-remove", QIcon.fromTheme("list-remove")))
+        remove = QToolButton(icon=icons.icon("edit-delete-remove", icons.icon("list-remove")))
         remove.setAutoRaise(True)
         remove.setToolTip("Remove condition")
         remove.clicked.connect(lambda _=False, i=i: self._remove(i))
@@ -532,12 +533,12 @@ class BindingEditor(QWidget):
 
         self.title = QLabel()
         self.title.setStyleSheet("font-weight: 600;")
-        self.yaml_button = QPushButton(QIcon.fromTheme("text-x-script"), "YAML")
+        self.yaml_button = QPushButton(icons.icon("text-x-script"), "YAML")
         self.yaml_button.setCheckable(True)
         self.yaml_button.toggled.connect(self._toggle_yaml)
-        self.delete_button = QPushButton(QIcon.fromTheme("edit-delete"), "Delete")
+        self.delete_button = QPushButton(icons.icon("edit-delete"), "Delete")
         self.delete_button.clicked.connect(self._delete)
-        self.bind_button = QPushButton(QIcon.fromTheme("list-add"), "Bind an action")
+        self.bind_button = QPushButton(icons.icon("list-add"), "Bind an action")
         self._bind_action = None
         self.bind_button.clicked.connect(lambda: self._bind_action and self._bind_action())
         head = QHBoxLayout()
@@ -559,7 +560,7 @@ class BindingEditor(QWidget):
         tr.addWidget(self.type_box)
         tr.addStretch(1)
         self.strokes_label = QLabel()
-        record = QPushButton(QIcon.fromTheme("draw-freehand", QIcon.fromTheme("media-record")), "Record stroke")
+        record = QPushButton(icons.icon("draw-freehand", icons.icon("media-record")), "Record stroke")
         record.clicked.connect(self._record_stroke)
         clear = QPushButton("Clear")
         clear.clicked.connect(self._clear_strokes)
@@ -602,7 +603,7 @@ class BindingEditor(QWidget):
         self.stage.currentIndexChanged.connect(self._do_edited)
         self.value = KeyField()
         self.value.recorded.connect(self._do_edited)
-        self.record = QPushButton(QIcon.fromTheme("media-record"), "Record")
+        self.record = QPushButton(icons.icon("media-record"), "Record")
         self.record.setCheckable(True)
         # Keep focus in the field while recording, so key presses keep landing there.
         self.record.setFocusPolicy(Qt.FocusPolicy.NoFocus)
@@ -614,7 +615,7 @@ class BindingEditor(QWidget):
         self.value.setClearButtonEnabled(True)
         vr.addWidget(self.value)
         vr.addWidget(self.record)
-        self.key_list_button = QPushButton(QIcon.fromTheme("input-keyboard"), "Keys…")
+        self.key_list_button = QPushButton(icons.icon("input-keyboard"), "Keys…")
         self.key_list_button.clicked.connect(self._show_key_list)
         self.key_list_button.setFocusPolicy(Qt.FocusPolicy.NoFocus)
         vr.addWidget(self.key_list_button)
