@@ -16,7 +16,7 @@ from . import describe as d
 
 HEADER = "# InputActions configuration, managed by Actuator."
 SNAPSHOT_DIR = Path.home() / ".local" / "share" / "actuator" / "snapshots"
-SNAPSHOT_KEEP = 50
+SNAPSHOT_KEEP = 10  # set from the user's options
 
 # Order sections are written in. Unknown top-level keys are kept, after these.
 SECTION_ORDER = ["mouse", "keyboard", "touchpad", "touchscreen", "pointer"]
@@ -158,9 +158,13 @@ def snapshot(path: Path) -> Path | None:
     SNAPSHOT_DIR.mkdir(parents=True, exist_ok=True)
     target = SNAPSHOT_DIR / f"config-{datetime.now():%Y%m%d-%H%M%S}.yaml"
     shutil.copy2(path, target)
+    prune()
+    return target
+
+
+def prune() -> None:
     for old in snapshots()[SNAPSHOT_KEEP:]:
         old.unlink()
-    return target
 
 
 def snapshots() -> list[Path]:
@@ -179,7 +183,7 @@ def write_atomic(path: Path, text: str) -> None:
     os.replace(tmp, path)
 
 
-def save(config: cfg.Config) -> Path | None:
+def save(config: cfg.Config, take_snapshot: bool = True) -> Path | None:
     """Render, verify, keep the original on first save, snapshot, then write.
 
     Returns the snapshot of the previous file, for undo.
@@ -190,7 +194,7 @@ def save(config: cfg.Config) -> Path | None:
     orig = original_path(path)
     if path.exists() and not is_managed(path) and not orig.exists():
         shutil.copy2(path, orig)
-    previous = snapshot(path)
+    previous = snapshot(path) if take_snapshot else None
     write_atomic(path, text)
     return previous
 

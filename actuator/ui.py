@@ -9,7 +9,7 @@ from pathlib import Path
 from PySide6.QtCore import QFileSystemWatcher, QSettings, Qt, QTimer, Signal
 from PySide6.QtGui import QAction, QIcon
 from PySide6.QtWidgets import (
-    QApplication, QDialog, QDialogButtonBox, QFileDialog, QFrame, QGridLayout, QHBoxLayout,
+    QApplication, QDialog, QFormLayout, QSpinBox, QDialogButtonBox, QFileDialog, QFrame, QGridLayout, QHBoxLayout,
     QCheckBox, QComboBox, QGroupBox, QInputDialog, QLabel, QLineEdit, QMainWindow, QMenu,
     QMessageBox, QPlainTextEdit, QPushButton, QScrollArea, QSizePolicy,
     QSplitter, QStackedWidget, QTabWidget, QToolBar, QToolButton, QTreeWidget,
@@ -46,16 +46,33 @@ def run(*cmd: str) -> tuple[bool, str]:
 PLUGIN_KEY = ("--file", "kwinrc", "--group", "Plugins", "--key", "kwin_gesturesEnabled")
 
 
-def starts_at_login() -> bool:
+EFFECT = "kwin_gestures"
+
+
+def login_setting() -> str:
+    """'true', 'false', or '' if never set."""
     ok, out = run("kreadconfig6", *PLUGIN_KEY)
-    return ok and out.strip() == "true"
+    return out.strip() if ok else ""
+
+
+def starts_at_login() -> bool:
+    return login_setting() == "true"
 
 
 def set_starts_at_login(on: bool) -> tuple[bool, str]:
-    ok, out = run("kwriteconfig6", *PLUGIN_KEY, "true" if on else "false")
-    if not ok:
-        return ok, out
-    return run("qdbus6", "org.kde.KWin", "/KWin", "reconfigure")  # apply now, not just next login
+    # Only the config: KWin reads it at login. Not reconfiguring leaves this session as it is.
+    return run("kwriteconfig6", *PLUGIN_KEY, "true" if on else "false")
+
+
+def effect_loaded() -> bool:
+    ok, out = run("qdbus6", "org.kde.KWin", "/Effects", "isEffectLoaded", EFFECT)
+    return ok and out.strip() == "true"
+
+
+def load_effect() -> tuple[bool, str]:
+    """Start InputActions for this session, whether or not it starts at login."""
+    ok, out = run("qdbus6", "org.kde.KWin", "/Effects", "loadEffect", EFFECT)
+    return ok and out.strip() == "true", out
 
 
 def active_window_class() -> str | None:
@@ -192,19 +209,25 @@ class SidebarTree(QTreeWidget):
 
 
 class OptionsDialog(QDialog):
-    def __init__(self, parent, tabs: dict[str, bool], autostart: bool):
+    def __init__(self, parent, tabs: dict[str, bool], autostart: bool, keep: int):
         super().__init__(parent)
         self.setWindowTitle("Options")
         self.autostart = QCheckBox("Start InputActions when I log in")
         self.autostart.setChecked(autostart)
-        note = QLabel("Same as its switch in System Settings → Desktop Effects. "
-                      "Turning it off also stops it now.")
-        note.setWordWrap(True)
-        note.setStyleSheet("color: palette(placeholder-text);")
-        ia = QGroupBox("InputActions")
-        il = QVBoxLayout(ia)
+        info = QToolButton(icon=QIcon.fromTheme("help-about-symbolic", QIcon.fromTheme("dialog-information")))
+        info.setAutoRaise(True)
+        info.setToolTip("How autostart works")
+        info.clicked.connect(self._explain_autostart)
+        ia = QGroupBox("Autostart")
+        il = QHBoxLayout(ia)
         il.addWidget(self.autostart)
-        il.addWidget(note)
+        il.addStretch(1)
+        il.addWidget(info)
+        self.keep = QSpinBox(minimum=1, maximum=200)
+        self.keep.setValue(keep)
+        backups = QGroupBox("Backups")
+        bl = QFormLayout(backups)
+        bl.addRow("Recent saves to keep", self.keep)
         self.boxes = {}
         group = QGroupBox("Show these tabs")
         gl = QVBoxLayout(group)
@@ -219,10 +242,28 @@ class OptionsDialog(QDialog):
         buttons.rejected.connect(self.reject)
         layout = QVBoxLayout(self)
         layout.addWidget(ia)
+        layout.addWidget(backups)
         layout.addWidget(group)
         layout.addStretch(1)
         layout.addWidget(buttons)
         self.resize(320, 0)
+
+    def _explain_autostart(self):
+        box = QMessageBox(self)
+        box.setWindowTitle("How autostart works")
+        box.setText(
+            "InputActions runs inside KWin as a desktop effect, so there's no separate program to start.\n\n"
+            "This checkbox is the same as its switch in System Settings → Desktop Effects. When it's on, "
+            "KWin loads InputActions every time you log in.\n\n"
+            "Turning it off only affects your next login. InputActions keeps running until then, and the "
+            "Start button in the toolbar can load it for the current session any time.\n\n"
+            "Clicking Apply in Desktop Effects while autostart is off can stop it for the current session."
+        )
+        open_effects = box.addButton("Open Desktop Effects", QMessageBox.ButtonRole.ActionRole)
+        box.addButton(QMessageBox.StandardButton.Close)
+        box.exec()
+        if box.clickedButton() is open_effects:
+            subprocess.Popen(["systemsettings", "kcm_kwin_effects"], start_new_session=True)
 
     def _keep_one(self):
         # At least one tab has to stay visible.
@@ -376,9 +417,13 @@ class MainWindow(QMainWindow):
         self.setWindowIcon(QIcon.fromTheme("input-mouse"))
         self.resize(1000, 720)
         self.settings = QSettings("Actuator", "Actuator")
+        writer.SNAPSHOT_KEEP = self.settings.value("snapshots/keep", 10, type=int)
         self.config: cfg.Config | None = None
         self.dirty = False
-        self.running = True  # InputActions has no status query; assume running at start.
+        if login_setting() == "":
+            set_starts_at_login(True)  # Actuator's default: start with Plasma
+        self.loaded = effect_loaded()  # real state, from KWin
+        self.suspended = False  # InputActions can't report this; assume not suspended
         self.current = ("global", None)
         self._issues = ""
         self._last_written: str | None = None
@@ -459,16 +504,27 @@ class MainWindow(QMainWindow):
 
     def show_options(self):
         autostart = starts_at_login()
-        dialog = OptionsDialog(self, {t: self.tab_visible(t) for t in cfg.DEVICES}, autostart)
+        dialog = OptionsDialog(self, {t: self.tab_visible(t) for t in cfg.DEVICES}, autostart,
+                               writer.SNAPSHOT_KEEP)
         if dialog.exec() != QDialog.DialogCode.Accepted:
             return
+        if dialog.keep.value() != writer.SNAPSHOT_KEEP:
+            dropping = len(writer.snapshots()[dialog.keep.value():])
+            if dropping:
+                answer = QMessageBox.question(
+                    self, "Actuator", f"Keeping {dialog.keep.value()} deletes your {dropping} oldest "
+                    f"saved version{'s' if dropping != 1 else ''}. Continue?",
+                    QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.Cancel,
+                )
+                if answer != QMessageBox.StandardButton.Yes:
+                    return
+            writer.SNAPSHOT_KEEP = dialog.keep.value()
+            self.settings.setValue("snapshots/keep", writer.SNAPSHOT_KEEP)
+            writer.prune()
         if dialog.autostart.isChecked() != autostart:
             ok, out = set_starts_at_login(dialog.autostart.isChecked())
             if not ok:
                 QMessageBox.warning(self, "Actuator", f"Couldn't change the InputActions setting.\n\n{out}")
-            else:
-                self.running = dialog.autostart.isChecked()
-                self._update_toggle()
         for title, on in dialog.tabs().items():
             self.settings.setValue(f"tabs/{title}", on)
         self._show_scope(*self.current)
@@ -476,10 +532,10 @@ class MainWindow(QMainWindow):
     def _fill_recent(self):
         self.recent.clear()
         orig = writer.original_path(cfg.CONFIG_PATH)
-        snaps = writer.snapshots()[:15]
+        snaps = writer.snapshots()
         for snap in snaps:
             stamp = datetime.strptime(snap.stem.removeprefix("config-"), "%Y%m%d-%H%M%S")
-            self.recent.addAction(f"{stamp:%b %d, %H:%M:%S}", lambda s=snap: self.restore(s))
+            self.recent.addAction(f"Before save at {stamp:%b %d, %H:%M:%S}", lambda s=snap: self.restore(s))
         if orig.exists():
             if snaps:
                 self.recent.addSeparator()
@@ -499,7 +555,8 @@ class MainWindow(QMainWindow):
 
     def _update_status(self):
         state = ("<span style='color:#2e9e5b'>● Running</span>" if self.running
-                 else "<span style='color:#c58a00'>● Stopped</span>")
+                 else "<span style='color:#c58a00'>● Stopped</span>" if self.loaded
+                 else "<span style='color:#c58a00'>● Not loaded</span>")
         tail = ("No issues" if not self._issues
                 else f"<span style='color:#d24545'>Config issues (hover)</span>")
         self.status.setText(f"<b>InputActions</b> &nbsp; {state} &nbsp; · &nbsp; {tail}")
@@ -516,12 +573,29 @@ class MainWindow(QMainWindow):
         self.dirty = True
         self._update_status()
 
+    @property
+    def running(self) -> bool:
+        return self.loaded and not self.suspended
+
     def toggle_running(self):
-        ok, out = run_ctl("suspend" if self.running else "resume")
+        if self.running:
+            ok, out = run_ctl("suspend")
+            if ok:
+                self.suspended = True
+        else:
+            ok, out = True, ""
+            if not self.loaded:
+                ok, out = load_effect()
+                self.loaded = effect_loaded()
+                if self.loaded:
+                    self.suspended = False  # a fresh load isn't suspended
+                    self.load()  # it can now report config issues
+            if ok and self.suspended:
+                ok, out = run_ctl("resume")
+                if ok:
+                    self.suspended = False
         if not ok:
             QMessageBox.warning(self, "Actuator", f"InputActions didn't respond.\n\n{out}")
-            return
-        self.running = not self.running
         self._update_toggle()
 
     # Disk ------------------------------------------------------------------
@@ -562,18 +636,43 @@ class MainWindow(QMainWindow):
                 return
         self.load()
 
-    def save(self):
+    def _confirm_first_write(self) -> bool:
         path = cfg.CONFIG_PATH
-        first = path.exists() and not writer.is_managed(path) and not writer.original_path(path).exists()
-        if first:
-            answer = QMessageBox.question(
-                self, "Reorganize your config?",
-                "This first save rewrites config.yaml in Actuator's layout. Hand-written "
-                f"comments won't be kept.\n\nYour current file is kept as {writer.original_path(path).name}.",
-                QMessageBox.StandardButton.Save | QMessageBox.StandardButton.Cancel,
-            )
-            if answer != QMessageBox.StandardButton.Save:
-                return
+        if not path.exists() or writer.is_managed(path) or writer.original_path(path).exists():
+            return True
+        answer = QMessageBox.question(
+            self, "Reorganize your config?",
+            "This first save rewrites config.yaml in Actuator's layout. Hand-written "
+            f"comments won't be kept.\n\nYour current file is kept as {writer.original_path(path).name}.",
+            QMessageBox.StandardButton.Save | QMessageBox.StandardButton.Cancel,
+        )
+        return answer == QMessageBox.StandardButton.Save
+
+    def apply_now(self, change, take_snapshot: bool = False) -> bool:
+        """Apply an organizing change (apps, folders, button names) and write it at once.
+
+        It's applied to the file as it is on disk, so unsaved binding edits stay unsaved.
+        """
+        if not self._confirm_first_write():
+            return False
+        try:
+            disk = cfg.load()
+            change(disk)
+            disk.reindex()
+            self._last_written = writer.render(disk)
+            writer.save(disk, take_snapshot)
+        except Exception as e:  # noqa: BLE001
+            QMessageBox.critical(self, "Actuator", f"Couldn't save that change. Your config wasn't changed.\n\n{e}")
+            return False
+        change(self.config)
+        self.config.reindex()
+        run_ctl("config", "reload")
+        self._check_issues()
+        return True
+
+    def save(self):
+        if not self._confirm_first_write():
+            return
         try:
             self._last_written = writer.render(self.config)
             previous = writer.save(self.config)
@@ -781,23 +880,22 @@ class MainWindow(QMainWindow):
         name = self._ask_folder_name("New folder")
         if not name:
             return
-        self.config.folders.setdefault(name, [])
-        if app:
-            self.config.move_to_folder(app, name)
-        self.mark_dirty()
-        self._fill_sidebar()
+        def change(c):
+            c.folders.setdefault(name, [])
+            if app:
+                c.move_to_folder(app, name)
+        if self.apply_now(change):
+            self._fill_sidebar()
 
     def move_app(self, app: str, folder: str | None):
-        self.config.move_to_folder(app, folder)
-        self.mark_dirty()
-        self._fill_sidebar()
+        if self.apply_now(lambda c: c.move_to_folder(app, folder)):
+            self._fill_sidebar()
 
     def rename_folder(self, folder: str):
         name = self._ask_folder_name("Rename folder", folder)
         if name and name != folder:
-            self.config.rename_folder(folder, name)
-            self.mark_dirty()
-            self._fill_sidebar()
+            if self.apply_now(lambda c: c.rename_folder(folder, name)):
+                self._fill_sidebar()
 
     def delete_folder(self, folder: str):
         n = len(self.config.folders.get(folder, []))
@@ -809,36 +907,37 @@ class MainWindow(QMainWindow):
             )
             if answer != QMessageBox.StandardButton.Yes:
                 return
-        self.config.folders.pop(folder, None)
-        self.mark_dirty()
-        self._fill_sidebar()
+        if self.apply_now(lambda c: c.folders.pop(folder, None)):
+            self._fill_sidebar()
 
     def add_app(self):
         dialog = AddAppDialog(self, list(self.config.folders))
         if dialog.exec() != QDialog.DialogCode.Accepted:
             return
-        app = cfg.app_key(dialog.value())
-        if app not in self.config.apps:
-            self.config.add_app(app)
-        if dialog.folder():
-            self.config.move_to_folder(app, dialog.folder())
-        self.mark_dirty()
-        self.current = ("app", app)
-        self._fill_sidebar()
+        app, folder = cfg.app_key(dialog.value()), dialog.folder()
+
+        def change(c):
+            if app not in c.apps:
+                c.add_app(app)
+            if folder:
+                c.move_to_folder(app, folder)
+        if self.apply_now(change):
+            self.current = ("app", app)
+            self._fill_sidebar()
 
     def remove_app(self, app: str):
         n = len(self.config.bindings_for("app", app))
         detail = f"This deletes its {n} binding{'s' if n != 1 else ''}." if n else "It has no bindings."
         answer = QMessageBox.question(
-            self, "Actuator", f"Remove {app.capitalize()}? {detail}\n\nNothing is written until you save.",
+            self, "Actuator", f"Remove {app.capitalize()}? {detail}",
             QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.Cancel,
         )
         if answer != QMessageBox.StandardButton.Yes:
             return
-        self.config.remove_app(app)
+        if not self.apply_now(lambda c: c.remove_app(app), take_snapshot=True):
+            return
         if self.current == ("app", app):
             self.current = ("global", None)
-        self.mark_dirty()
         self._fill_sidebar()
 
     # Pages -----------------------------------------------------------------
@@ -948,8 +1047,8 @@ class MainWindow(QMainWindow):
             return
         src = dialog.src
         if not any(b.src == src for b in self.config.buttons):
-            self.config.add_button(src, d.button_label(src))
-            self.mark_dirty()
+            if not self.apply_now(lambda c: c.add_button(src, d.button_label(src))):
+                return
         self._show_scope(*self.current, select=lambda p: p.get("src") == src)
 
     def _renamed(self, page: BindingsPage, item: QTreeWidgetItem):
@@ -961,8 +1060,7 @@ class MainWindow(QMainWindow):
         new = item.text(0).strip() or d.button_label(src)  # empty resets to the raw input
         if new == button_name(btn):
             return
-        self.config.rename_button(src, new if new != d.button_label(src) else src)
-        self.mark_dirty()
+        self.apply_now(lambda c: c.rename_button(src, new if new != d.button_label(src) else src))
         self._show_scope(*self.current, select=lambda q: q.get("src") == src)
 
     def _gesture_page(self, scope, app, section, select=None) -> QWidget:
