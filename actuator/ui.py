@@ -65,7 +65,8 @@ def run_ctl(*args: str) -> tuple[bool, str]:
         p = subprocess.run(["inputactions", *args], capture_output=True, text=True, timeout=5)
     except (OSError, subprocess.TimeoutExpired) as e:
         return False, str(e)
-    return p.returncode == 0, (p.stdout + p.stderr).strip()
+    out = re.sub(r"\x1b\[[0-9;]*m", "", p.stdout + p.stderr)  # its terminal colors
+    return p.returncode == 0, out.strip()
 
 
 def run(*cmd: str) -> tuple[bool, str]:

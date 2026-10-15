@@ -48,6 +48,8 @@ def button_label(src: str) -> str:
 
 def token(t) -> str:
     """One input token: 'leftctrl+w' taps, '+f' presses, '-f' releases."""
+    if isinstance(t, dict) and set(t) == {"text"}:
+        return f'Type "{t["text"]}"' if isinstance(t["text"], str) else "Type text"
     if not isinstance(t, str):
         return str(t)
     if t.startswith("+") and len(t) > 1:
@@ -64,9 +66,12 @@ def action_steps(a: dict) -> list[str]:
             if not isinstance(item, dict):
                 steps.append(str(item))
                 continue
-            for _device, toks in item.items():
+            for device, toks in item.items():
                 for t in toks if isinstance(toks, list) else [toks]:
-                    steps.append(token(t))
+                    if device == "mouse" and isinstance(t, str) and t.isalnum():
+                        steps.append(f"{button_label(t)} click")  # a plain button, not a move or wheel
+                    else:
+                        steps.append(token(t))
         return steps
     for k, label in (
         ("command", "Run"),
@@ -144,7 +149,8 @@ def gesture_title(g: dict) -> str:
     direction = f" {str(g['direction']).replace('_', '/')}" if "direction" in g else ""
     if t == "shortcut":
         return shortcut(g.get("shortcut") or [])
-    return f"{fingers}{t}{direction}".capitalize()
+    speed = f"{g['speed']} " if g.get("speed") in ("fast", "slow") else ""
+    return f"{speed}{fingers}{t}{direction}".capitalize()
 
 
 def condition(c) -> str:

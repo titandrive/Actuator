@@ -3,10 +3,10 @@
 import re
 
 from PySide6.QtCore import QProcess, Qt, Signal
-from PySide6.QtGui import QIcon
+from PySide6.QtGui import QFontDatabase, QIcon
 from PySide6.QtWidgets import (
     QSizePolicy,
-    QComboBox, QDialog, QDialogButtonBox, QFormLayout, QGroupBox, QHBoxLayout, QLabel, QLineEdit,
+    QComboBox, QDialog, QDialogButtonBox, QDoubleSpinBox, QFormLayout, QGroupBox, QHBoxLayout, QLabel, QLineEdit,
     QMessageBox, QPlainTextEdit, QPushButton, QSpinBox, QStackedWidget, QToolButton, QTreeWidget,
     QTreeWidgetItem, QVBoxLayout, QWidget,
 )
@@ -25,7 +25,7 @@ from .widgets import Section, ToggleRow, label_width, tidy_form
 GESTURE_TYPES = {
     "mouse": ["press", "wheel", "swipe", "stroke", "circle"],
     "keyboard": ["shortcut"],
-    "touchpad": ["swipe", "pinch", "rotate", "hold", "tap", "click", "circle", "stroke"],
+    "touchpad": ["swipe", "pinch", "rotate", "hold", "tap", "click", "circle"],  # strokes need one finger, which is pointing
     "touchscreen": ["swipe", "pinch", "rotate", "hold", "tap", "circle", "stroke"],
     "pointer": ["hover"],
 }
@@ -38,9 +38,48 @@ DIRECTIONS = {
 }
 FINGER_TYPES = {"swipe", "pinch", "rotate", "hold", "tap", "click", "circle", "stroke"}
 FINGER_SECTIONS = {"touchpad", "touchscreen"}
+# Finger counts InputActions allows for each gesture (from its wiki), and where a new one starts:
+# two to pinch or rotate, three for the rest so they don't fight with pointing, scrolling,
+# clicking and right-clicking.
+FINGER_RANGE = {
+    "touchpad": {"swipe": (1, 4), "pinch": (2, 4), "rotate": (2, 4), "hold": (1, 4), "tap": (1, 5),
+                 "click": (1, 5), "circle": (1, 4), "stroke": (1, 4)},
+    "touchscreen": {"swipe": (1, 5), "pinch": (2, 5), "rotate": (2, 5), "hold": (1, 5), "tap": (1, 5),
+                    "circle": (1, 5), "stroke": (1, 5)},
+}
+FINGER_DEFAULT = {"pinch": 2, "rotate": 2}
+# Motion gestures that a single finger would take over from ordinary pointing and touching.
+MOTION_TYPES = {"swipe", "stroke", "circle"}
+# A mouse motion gesture with no held button would catch every movement of the mouse. A button
+# pressed and released without moving still clicks normally (InputActions replays it).
+MOUSE_HOLD_BUTTONS = ["right", "middle", "back", "forward", "task", "side", "extra"]
+MOUSE_HOLD_DEFAULT = ["right"]
+# Motion triggers can require being done fast or slow, so one gesture can do two things.
+SPEED_TYPES = {"swipe", "pinch", "rotate", "circle", "stroke", "wheel"}
+SPEEDS = [(None, "Any"), ("fast", "Fast"), ("slow", "Slow")]
+# How far a gesture must go before it counts, in what its trigger measures. Press and tap
+# style triggers start at once, so a threshold means nothing to them here.
+THRESHOLD_UNITS = {"hold": " ms", "swipe": "", "stroke": "", "wheel": "", "circle": "°", "rotate": "°",
+                   "pinch": ""}
+THRESHOLD_HINTS = {"hold": "How long to hold before it fires.",
+                   "circle": "How far round to go before it counts.",
+                   "rotate": "How far to turn before it counts.",
+                   "pinch": "How much to pinch before it counts (0.1 is a small pinch)."}
+LOCK_POINTER_TYPES = {"swipe", "stroke", "circle"}  # mouse only: other devices don't move the pointer
 
-MODES = ["Press keys", "Hold keys", "Run command", "Plasma shortcut", "Custom (YAML)"]
+
+def finger_range(section: str, trigger_type: str) -> tuple[int, int]:
+    return FINGER_RANGE.get(section, {}).get(trigger_type, (1, 5))
+
+
+def default_fingers(trigger_type: str) -> int:
+    return FINGER_DEFAULT.get(trigger_type, 3)
+
+MODES = ["Press keys", "Hold keys", "Click mouse button", "Type text", "Run command", "Plasma shortcut",
+         "Custom (YAML)"]
+CLICK_BUTTONS = ["left", "right", "middle", "back", "forward", "task", "side", "extra"]
 TAP_STAGES = [("begin", "When it starts"), ("end", "When it ends")]
+END_ONLY = {"stroke"}  # InputActions only runs these triggers' actions once they end
 
 
 def slug(text: str) -> str:
@@ -62,7 +101,20 @@ def scope_conditions(scope: str, app: str | None):
 
 
 def default_stage(trigger_type: str) -> str:
-    return "end" if trigger_type in ("tap", "click") else "begin"
+    return "end" if trigger_type in ("tap", "click") or trigger_type in END_ONLY else "begin"
+
+
+def end_only_actions(actions) -> list | None:
+    """Actions moved to 'on: end' for triggers that allow nothing else, or None if already fine.
+    Held keys can't be held there, so they become a press."""
+    actions = list(actions or [])
+    mode, values = detect_mode(actions)
+    if mode == "Hold keys":
+        return build_actions("Press keys", {"on": "end", "keys": values["keys"]})
+    if all(not isinstance(a, dict) or str(a.get("on", "end")) == "end" for a in actions):
+        return None
+    return [dict(a, on="end") if isinstance(a, dict) and str(a.get("on", "end")) in ("begin", "update")
+            else a for a in actions]
 
 
 def new_button_binding(config: cfg.Config, button: cfg.Button, scope: str, app: str | None) -> tuple[str, dict]:
@@ -84,7 +136,7 @@ def new_gesture_binding(config: cfg.Config, section: str, trigger_type: str, sco
     where = app or "global"
     data = {"id": unique_id(config, f"{slug(where)}_{section}_{trigger_type}"), "type": trigger_type}
     if section in FINGER_SECTIONS and trigger_type in FINGER_TYPES:
-        data["fingers"] = 3
+        data["fingers"] = default_fingers(trigger_type)
     if trigger_type in DIRECTIONS:
         data["direction"] = DIRECTIONS[trigger_type][0]
     if trigger_type == "shortcut":
@@ -92,6 +144,8 @@ def new_gesture_binding(config: cfg.Config, section: str, trigger_type: str, sco
         data["clear_modifiers"] = True
     if trigger_type == "press":
         data["mouse_buttons"] = ["middle"]
+    if section == "mouse" and trigger_type in MOTION_TYPES:
+        data["mouse_buttons"] = list(MOUSE_HOLD_DEFAULT)
     if conds := scope_conditions(scope, app):
         data["conditions"] = conds
     data["actions"] = [{"on": default_stage(trigger_type), "input": [{"keyboard": []}]}]
@@ -123,6 +177,15 @@ def detect_mode(actions) -> tuple[str, dict]:
         toks = _keyboard_tokens(a)
         if toks is not None and on in ("begin", "end") and not any(t[:1] in "+-" and len(t) > 1 for t in toks):
             return "Press keys", {"on": on, "keys": ", ".join(d.combo(t) for t in toks)}
+        items = a.get("input") if set(a) <= {"on", "input"} else None
+        if isinstance(items, list) and len(items) == 1 and isinstance(items[0], dict) and len(items[0]) == 1:
+            (device, toks), = items[0].items()
+            toks = toks if isinstance(toks, list) else [toks]
+            if device == "mouse" and len(toks) == 1 and str(toks[0]) in CLICK_BUTTONS:
+                return "Click mouse button", {"on": on, "value": str(toks[0])}
+            if (device == "keyboard" and len(toks) == 1 and isinstance(toks[0], dict)
+                    and set(toks[0]) == {"text"} and isinstance(toks[0]["text"], str)):
+                return "Type text", {"on": on, "value": toks[0]["text"]}
         if set(a) == {"on", "command"} or set(a) == {"command"}:
             return "Run command", {"on": on, "value": str(a["command"])}
         if set(a) == {"on", "plasma_shortcut"} or set(a) == {"plasma_shortcut"}:
@@ -147,6 +210,12 @@ def build_actions(mode: str, values: dict) -> list:
             {"on": "begin", "input": [{"keyboard": [f"+{k}" for k in held]}]},
             {"on": "end_cancel", "input": [{"keyboard": [f"-{k}" for k in reversed(held)]}]},
         ]
+    if mode == "Click mouse button":
+        return [{"on": values["on"], "input": [{"mouse": [values["value"]]}]}]
+    if mode == "Type text":
+        if not values["value"]:
+            raise ValueError("Enter the text to type.")
+        return [{"on": values["on"], "input": [{"keyboard": [{"text": values["value"]}]}]}]
     if mode == "Run command":
         if not values["value"].strip():
             raise ValueError("Enter a command.")
@@ -317,33 +386,77 @@ class StrokeRecorder(QDialog):
     def __init__(self, parent):
         super().__init__(parent)
         self.setWindowTitle("Record stroke")
+        self.setFixedWidth(420)
         self.stroke: str | None = None
-        self.info = QLabel("Draw the shape now: hold a mouse button and move, or draw with your fingers "
-                           "on the touchpad. InputActions records it when you let go.")
+        self.heading = QLabel()
+        font = self.heading.font()
+        font.setPointSizeF(font.pointSizeF() * 1.15)
+        font.setBold(True)
+        self.heading.setFont(font)
+        self.info = QLabel()
         self.info.setWordWrap(True)
-        cancel = QPushButton("Cancel")
-        cancel.clicked.connect(self.reject)
+        self.info.setStyleSheet("color: palette(placeholder-text);")
+        # InputActions' own output can be long, with lines that don't wrap: keep it in a small box.
+        self.details = QPlainTextEdit(readOnly=True)
+        self.details.setLineWrapMode(QPlainTextEdit.LineWrapMode.NoWrap)
+        self.details.setFont(QFontDatabase.systemFont(QFontDatabase.SystemFont.FixedFont))
+        self.details.setFixedHeight(120)
+        self.details.hide()
+        self.retry = QPushButton(icons.icon("media-record"), "Try again")
+        self.retry.clicked.connect(self._start)
+        self.cancel = QPushButton("Cancel")
+        self.cancel.clicked.connect(self.reject)
+        buttons = QHBoxLayout()
+        buttons.addStretch(1)
+        buttons.addWidget(self.retry)
+        buttons.addWidget(self.cancel)
         layout = QVBoxLayout(self)
+        layout.setContentsMargins(20, 18, 20, 16)
+        layout.setSpacing(10)
+        layout.addWidget(self.heading)
         layout.addWidget(self.info)
-        layout.addWidget(cancel, 0, Qt.AlignmentFlag.AlignRight)
-        self.resize(380, 0)
+        layout.addWidget(self.details)
+        layout.addSpacing(4)
+        layout.addLayout(buttons)
         self.proc = QProcess(self)
         self.proc.setProcessChannelMode(QProcess.ProcessChannelMode.MergedChannels)
         self.proc.finished.connect(self._finished)
-        self.proc.errorOccurred.connect(lambda _e: self._failed("Couldn't run the inputactions command."))
+        self.proc.errorOccurred.connect(self._error)
+        self._start()
+
+    def _show(self, heading: str, info: str, details: str = "", failed: bool = False):
+        self.heading.setText(heading)
+        self.info.setText(info)
+        self.details.setPlainText(details)
+        self.details.setVisible(bool(details))
+        self.retry.setVisible(failed)
+        self.cancel.setText("Close" if failed else "Cancel")
+        self.layout().activate()
+        self.setFixedHeight(self.sizeHint().height())
+
+    def _start(self):
+        self._show("Draw the shape now",
+                   "Hold a mouse button and move, or draw with your fingers on the touchpad. "
+                   "It's recorded when you let go.")
         self.proc.start("inputactions", ["record-stroke"])
 
+    def _error(self, error):
+        if error == QProcess.ProcessError.FailedToStart:
+            self._show("Couldn't record", "The inputactions command couldn't be run.", failed=True)
+
     def _finished(self, *_):
-        out = bytes(self.proc.readAll()).decode(errors="replace")
+        out = re.sub(r"\x1b\[[0-9;]*m", "", bytes(self.proc.readAll()).decode(errors="replace")).strip()
         tokens = STROKE_TOKEN.findall(out)
-        if tokens:
+        if tokens and self.proc.exitCode() == 0:
             self.stroke = max(tokens, key=len)  # the encoded stroke is the long base64 string
             self.accept()
+        elif "valid configuration" in out:
+            self._show("Couldn't record",
+                       "InputActions can only record while the saved config has no errors. "
+                       "Fix the problem it reported and save, then try again.", failed=True)
         else:
-            self._failed("No stroke was recorded." + (f"\n\n{out.strip()}" if out.strip() else ""))
-
-    def _failed(self, message: str):
-        self.info.setText(message)
+            self._show("No stroke was recorded", "InputActions said:" if out else "Try drawing it again.",
+                       out, failed=True)
 
     def reject(self):
         if self.proc.state() != QProcess.ProcessState.NotRunning:
@@ -570,22 +683,53 @@ class BindingEditor(QWidget):
         sr.addWidget(clear)
         sr.addStretch(1)
         self.fingers = QSpinBox(minimum=1, maximum=5)
+        self.finger_warning = QLabel()
+        self.finger_warning.setWordWrap(False)
+        self.finger_warning.setStyleSheet("color: palette(placeholder-text);")
+        self.fingers_row = self.fingers
+        self.hold_button = QComboBox()
+        self.hold_button.currentIndexChanged.connect(self._hold_button_edited)
+        self.hold_hint = QLabel("Hold it while you move the mouse. A plain click still works as usual.")
+        self.hold_hint.setWordWrap(False)
+        self.hold_hint.setStyleSheet("color: palette(placeholder-text);")
+        self.hold_row = self.hold_button
         self.direction = QComboBox()
+        self.speed = QComboBox()
+        for value, label in SPEEDS:
+            self.speed.addItem(label, value)
+        self.speed.setToolTip("Fast and slow versions of the same gesture can do different things.")
+        self.threshold = QDoubleSpinBox(minimum=0, maximum=100000, decimals=2)
+        self.threshold.setSpecialValueText("Off")  # 0: no threshold
+        self.threshold.setMinimumWidth(110)
+        self.threshold_hint = QLabel()
+        self.threshold_hint.setWordWrap(False)
+        self.threshold_hint.setStyleSheet("color: palette(placeholder-text);")
+        self.lock_pointer = ToggleRow("Keep the pointer still while drawing")
         self.instant = ToggleRow("Fire as soon as the button goes down")
         self.block = ToggleRow("Override default system input")
         self.block.setToolTip("When on, only your action runs. When off, the app also gets the original "
                               "button press or gesture.")
         self.when_form.addRow("Type", trigger_row)
         self.when_form.addRow("Strokes", self.strokes_row)
-        self.when_form.addRow("Fingers", self.fingers)
+        self.when_form.addRow("Hold", self.hold_row)
+        self.when_form.addRow("", self.hold_hint)
+        self.when_form.addRow("Fingers", self.fingers_row)
+        self.when_form.addRow("", self.finger_warning)
         self.when_form.addRow("Direction", self.direction)
+        self.when_form.addRow("Speed", self.speed)
+        self.when_form.addRow("Threshold", self.threshold)
+        self.when_form.addRow("", self.threshold_hint)
+        self.when_form.addRow("", self.lock_pointer)
         self.when_form.addRow("", self.instant)
         self.when_form.addRow("", self.block)
         # One label column for every card, sized to the longest label in the user's font.
-        self._label_w = label_width(self, ["Type", "Strokes", "Fingers", "Direction", "When", "Value"])
+        self._label_w = label_width(self, ["Type", "Strokes", "Hold", "Fingers", "Direction", "Speed", "Threshold", "When", "Value"])
         tidy_form(self.when_form, width=self._label_w)
         self.fingers.valueChanged.connect(self._trigger_edited)
         self.direction.currentTextChanged.connect(self._trigger_edited)
+        self.speed.currentIndexChanged.connect(self._trigger_edited)
+        self.threshold.valueChanged.connect(self._trigger_edited)
+        self.lock_pointer.toggled.connect(self._trigger_edited)
         self.instant.toggled.connect(self._trigger_edited)
         self.block.toggled.connect(self._trigger_edited)
 
@@ -617,8 +761,12 @@ class BindingEditor(QWidget):
         vr = QHBoxLayout(value_row)
         vr.setContentsMargins(0, 0, 0, 0)
         self.value.setMaximumWidth(340)
+        self.value.setMinimumWidth(200)
         self.value.setClearButtonEnabled(True)
         vr.addWidget(self.value)
+        self.click_button = QComboBox()
+        self.click_button.currentIndexChanged.connect(self._do_edited)
+        vr.addWidget(self.click_button)
         vr.addWidget(self.record)
         self.key_list_button = QPushButton(icons.icon("input-keyboard"), "Keys…")
         self.key_list_button.clicked.connect(self._show_key_list)
@@ -684,10 +832,14 @@ class BindingEditor(QWidget):
         layout.setSpacing(14)
         layout.addLayout(head)
         for w in (self.when_box, self.cond_box, self.do_box, self.yaml_box):
+            # Never taller than their content: spare height goes to the stretch below, not into
+            # gaps inside a card when a shorter binding replaces a taller one.
+            w.setSizePolicy(QSizePolicy.Policy.Preferred, QSizePolicy.Policy.Maximum)
             layout.addWidget(w)
         layout.addStretch(1)
         # Dropdowns share a width so they line up down the cards.
-        for combo in (self.type_box, self.direction, self.mode, self.stage):
+        for combo in (self.type_box, self.direction, self.mode, self.stage, self.hold_button, self.speed,
+                      self.click_button):
             combo.setMinimumWidth(200)
         self.show_message("Select a binding to edit it.")
 
@@ -739,9 +891,16 @@ class BindingEditor(QWidget):
         n = len(g.get("strokes") or []) if isinstance(g.get("strokes"), list) else (1 if g.get("strokes") else 0)
         self.strokes_label.setText(f"{n} recorded" if n else "None yet. Record one, or this gesture won't work.")
         has_fingers = "fingers" in g or (b.section in FINGER_SECTIONS and t in FINGER_TYPES)
-        self.when_form.setRowVisible(self.fingers, has_fingers)
+        self.when_form.setRowVisible(self.fingers_row, has_fingers)
         if has_fingers:
-            self.fingers.setValue(int(g.get("fingers", 3)))
+            self.fingers.setRange(*finger_range(b.section, t))
+            self.fingers.setValue(int(g.get("fingers", default_fingers(t))))
+        self._update_finger_warning()
+        show_hold = b.section == "mouse" and t in MOTION_TYPES
+        self.when_form.setRowVisible(self.hold_row, show_hold)
+        self.when_form.setRowVisible(self.hold_hint, show_hold)
+        if show_hold:
+            self._fill_hold_button(g.get("mouse_buttons"))
         self.when_form.setRowVisible(self.direction, t in DIRECTIONS)
         self.direction.clear()
         if t in DIRECTIONS:
@@ -750,6 +909,28 @@ class BindingEditor(QWidget):
             if current not in DIRECTIONS[t]:
                 self.direction.addItem(current)
             self.direction.setCurrentText(current)
+        show_speed = t in SPEED_TYPES or "speed" in g
+        self.when_form.setRowVisible(self.speed, show_speed)
+        if show_speed:
+            current = g.get("speed")
+            if self.speed.findData(current) < 0:
+                self.speed.addItem(str(current), current)
+            self.speed.setCurrentIndex(self.speed.findData(current))
+        current = g.get("threshold")
+        numeric = current is None or (isinstance(current, (int, float)) and not isinstance(current, bool))
+        show_threshold = t in THRESHOLD_UNITS and numeric  # a min-max range stays in YAML
+        self.when_form.setRowVisible(self.threshold, show_threshold)
+        self.when_form.setRowVisible(self.threshold_hint, show_threshold)
+        if show_threshold:
+            self.threshold.setSuffix(THRESHOLD_UNITS[t])
+            self.threshold.setDecimals(2 if t == "pinch" else 0)
+            self.threshold.setSingleStep(0.05 if t == "pinch" else (50 if t == "hold" else 5))
+            self.threshold.setValue(float(current or 0))
+            self.threshold_hint.setText(THRESHOLD_HINTS.get(t, "How far to move before it counts, "
+                                                               "so small slips don't fire it."))
+        show_lock = b.section == "mouse" and t in LOCK_POINTER_TYPES
+        self.when_form.setRowVisible(self.lock_pointer, show_lock)
+        self.lock_pointer.setChecked(bool(g.get("lock_pointer", False)))
         self.when_form.setRowVisible(self.instant, t == "press")
         self.instant.setChecked(bool(g.get("instant", False)))
         self.block.setChecked(bool(g.get("block_events", True)))
@@ -757,6 +938,9 @@ class BindingEditor(QWidget):
         where = f"in {apps.display_name(b.app)}" if b.scope == "app" else ("everywhere" if b.scope == "global" else "")
         self.conditions.load(g, where)
 
+        if b.type in END_ONLY and (fixed := end_only_actions(g.get("actions"))) is not None:
+            g["actions"] = fixed  # it wouldn't load as it was
+            self.changed.emit()
         mode, values = detect_mode(g.get("actions"))
         self._fill_do(mode, values)
         self.yaml.setPlainText(d.to_yaml(g))
@@ -771,25 +955,47 @@ class BindingEditor(QWidget):
         if custom:
             self.actions_yaml.setPlainText(d.to_yaml(self.binding.data.get("actions") or []))
             return
-        self.stage.setVisible(mode != "Hold keys")
-        self.simple.layout().labelForField(self.stage).setVisible(mode != "Hold keys")
-        idx = self.stage.findData(values.get("on", default_stage(self.binding.type)))
+        end_only = self.binding.type in END_ONLY
+        self.mode.model().item(MODES.index("Hold keys")).setEnabled(not end_only)
+        self.stage.setVisible(mode != "Hold keys" and not end_only)
+        self.simple.layout().labelForField(self.stage).setVisible(mode != "Hold keys" and not end_only)
+        idx = self.stage.findData("end" if end_only else values.get("on", default_stage(self.binding.type)))
         self.stage.setCurrentIndex(max(idx, 0))
         self.record.setChecked(False)
         self.record.setVisible(mode in ("Press keys", "Hold keys"))
         self.key_list_button.setVisible(mode in ("Press keys", "Hold keys"))
+        clicking = mode == "Click mouse button"
+        self.value.setVisible(not clicking)
+        self.click_button.setVisible(clicking)
+        if clicking:
+            self._fill_click_button(values.get("value") or "middle")
         self.value.single = mode == "Hold keys"
-        self.value.setText(values.get("keys", values.get("value", "")))
+        self.value.setText(values.get("keys", values.get("value", "")) if not clicking else "")
         self.value.setPlaceholderText({
             "Press keys": "Ctrl+W", "Hold keys": "F", "Run command": "konsole",
-            "Plasma shortcut": "kwin,Overview",
+            "Plasma shortcut": "kwin,Overview", "Type text": "Hello!", "Click mouse button": "",
         }[mode])
         self.value_hint.setText({
             "Press keys": "Click Record and press the keys, or type them: Ctrl+C, Ctrl+V",
             "Hold keys": "Held while the trigger is active. Click Record and press them, or type them.",
+            "Click mouse button": "Clicks this button wherever the pointer is.",
+            "Type text": "Typed into the focused window, exactly as written.",
             "Run command": "Runs in the background.",
             "Plasma shortcut": "Component and shortcut name, as in System Settings → Shortcuts.",
         }[mode])
+
+    def _fill_click_button(self, current: str):
+        self.click_button.blockSignals(True)
+        self.click_button.clear()
+        names = self.config.button_names if self.config else {}
+        for src in CLICK_BUTTONS:
+            label = d.button_label(src)
+            name = names.get(src) or label
+            self.click_button.addItem(name if name == label else f"{name} ({label})", src)
+        if self.click_button.findData(current) < 0:
+            self.click_button.addItem(d.button_label(current), current)
+        self.click_button.setCurrentIndex(self.click_button.findData(current))
+        self.click_button.blockSignals(False)
 
     # Edits -----------------------------------------------------------------
 
@@ -806,11 +1012,20 @@ class BindingEditor(QWidget):
         g, new = self.binding.data, self.type_box.currentData()
         if not new or new == g.get("type"):
             return
-        g["type"] = new
+        old, g["type"] = str(g.get("type")), new
         if self.binding.section in FINGER_SECTIONS and new in FINGER_TYPES:
-            g.setdefault("fingers", 3)
+            low, high = finger_range(self.binding.section, new)
+            count = g.get("fingers")
+            # Left at the old gesture's default, or not allowed for this one: use this one's default.
+            if not isinstance(count, int) or count == default_fingers(old) or not low <= count <= high:
+                g["fingers"] = default_fingers(new)
         else:
             g.pop("fingers", None)
+        if self.binding.section == "mouse":
+            if new in MOTION_TYPES and not g.get("mouse_buttons"):
+                g["mouse_buttons"] = list(MOUSE_HOLD_DEFAULT)
+            elif new == "wheel" and g.get("mouse_buttons") == MOUSE_HOLD_DEFAULT:
+                g.pop("mouse_buttons", None)  # the one we added: a wheel needs no held button
         if new in DIRECTIONS:
             if str(g.get("direction")) not in DIRECTIONS[new]:
                 g["direction"] = DIRECTIONS[new][0]
@@ -818,6 +1033,14 @@ class BindingEditor(QWidget):
             g.pop("direction", None)
         if new != "stroke":
             g.pop("strokes", None)
+        if new not in SPEED_TYPES:
+            g.pop("speed", None)
+        if new not in THRESHOLD_UNITS or THRESHOLD_UNITS.get(new) != THRESHOLD_UNITS.get(old):
+            g.pop("threshold", None)  # measured differently now
+        if new not in LOCK_POINTER_TYPES:
+            g.pop("lock_pointer", None)
+        if new in END_ONLY and (fixed := end_only_actions(g.get("actions"))) is not None:
+            g["actions"] = fixed
         self._commit()
         self.show_binding(self.title.text(), self.binding)  # rows for the new type
         if new == "stroke" and not g.get("strokes"):
@@ -854,14 +1077,66 @@ class BindingEditor(QWidget):
             return
         self._commit()
 
+    def _fill_hold_button(self, current):
+        self.hold_button.blockSignals(True)
+        self.hold_button.clear()
+        names = self.config.button_names if self.config else {}
+        for src in MOUSE_HOLD_BUTTONS:
+            name = names.get(src) or d.button_label(src)
+            self.hold_button.addItem(name if name == d.button_label(src) else f"{name} ({d.button_label(src)})", [src])
+        current = list(current) if isinstance(current, list) else ([current] if current else [])
+        if not current:
+            self.hold_button.addItem("Nothing (catches every mouse movement)", [])
+        elif self.hold_button.findData(current) < 0:
+            self.hold_button.addItem(" + ".join(d.button_label(str(c)) for c in current), current)
+        self.hold_button.setCurrentIndex(self.hold_button.findData(current))
+        self.hold_button.blockSignals(False)
+
+    def _hold_button_edited(self, _index):
+        if self._loading or not self.binding or self.hold_button.currentData() is None:
+            return
+        buttons = self.hold_button.currentData()
+        if buttons:
+            self.binding.data["mouse_buttons"] = list(buttons)
+        else:
+            self.binding.data.pop("mouse_buttons", None)
+        self._commit()
+
+    def _update_finger_warning(self):
+        b = self.binding
+        one = (b is not None and self.when_form.isRowVisible(self.fingers_row) and self.fingers.value() == 1
+               and b.type in MOTION_TYPES)
+        self.when_form.setRowVisible(self.finger_warning, one)
+        if one:
+            what = "moving the pointer" if b.section == "touchpad" else "touching and scrolling"
+            self.finger_warning.setText(f"One finger is also how you're {what}, so this gesture\n"
+                                        f"takes that over wherever it applies. Use three fingers instead.")
+
     def _trigger_edited(self, *_):
         if self._loading or not self.binding:
             return
         g = self.binding.data
-        if self.when_form.isRowVisible(self.fingers):
+        self._update_finger_warning()
+        if self.when_form.isRowVisible(self.fingers_row):
             g["fingers"] = self.fingers.value()
         if self.when_form.isRowVisible(self.direction) and self.direction.currentText():
             g["direction"] = self.direction.currentText()
+        if self.when_form.isRowVisible(self.speed):
+            if self.speed.currentData():
+                g["speed"] = self.speed.currentData()
+            else:
+                g.pop("speed", None)
+        if self.when_form.isRowVisible(self.threshold):
+            value = self.threshold.value()
+            if value:
+                g["threshold"] = int(value) if self.threshold.decimals() == 0 else round(value, 2)
+            else:
+                g.pop("threshold", None)
+        if self.when_form.isRowVisible(self.lock_pointer):
+            if self.lock_pointer.isChecked():
+                g["lock_pointer"] = True
+            else:
+                g.pop("lock_pointer", None)
         if self.binding.type == "press":
             g["instant"] = self.instant.isChecked()
         if self.block.isChecked():
@@ -907,7 +1182,10 @@ class BindingEditor(QWidget):
         self._loading = True
         self._fill_do(mode, {"on": self.stage.currentData(), "keys": "", "value": ""})
         self._loading = False
-        self.value.setFocus()
+        if mode == "Click mouse button":
+            self._do_edited()  # nothing to type: the shown button is already a choice
+        else:
+            self.value.setFocus()
 
     def _do_edited(self, *_, quiet: bool = False):
         if self._loading or not self.binding:
@@ -920,8 +1198,9 @@ class BindingEditor(QWidget):
                 # Cleared: keep the binding but make it do nothing, matching what's shown.
                 actions = [{"on": self.stage.currentData() or "begin", "input": [{"keyboard": []}]}]
             else:
+                value = self.click_button.currentData() if mode == "Click mouse button" else self.value.text()
                 actions = build_actions(mode, {"on": self.stage.currentData(), "keys": self.value.text(),
-                                               "value": self.value.text()})
+                                               "value": value})
         except ValueError as e:
             if not quiet:
                 self.error.setText(str(e))

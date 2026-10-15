@@ -154,6 +154,48 @@ class LabelTests(TempConfig):
         self.assertEqual(c.labels[new.id], "Inventory")
 
 
+class StrokeTests(unittest.TestCase):
+    def test_stroke_actions_run_on_end(self):
+        self.assertEqual(editor.default_stage("stroke"), "end")
+        press = [{"on": "begin", "input": [{"keyboard": ["leftctrl+a"]}]}]
+        self.assertEqual(editor.end_only_actions(press), [{"on": "end", "input": [{"keyboard": ["leftctrl+a"]}]}])
+        self.assertIsNone(editor.end_only_actions([{"on": "end", "command": "x"}]))
+        hold = editor.build_actions("Hold keys", {"keys": "F"})
+        self.assertEqual(editor.detect_mode(editor.end_only_actions(hold)), ("Press keys", {"on": "end", "keys": "F"}))
+
+
+class FingerTests(TempConfig):
+    def test_defaults_and_ranges_per_gesture(self):
+        c = cfg.load(self.path)
+        self.assertNotIn("stroke", editor.GESTURE_TYPES["touchpad"])  # one finger is pointing
+        self.assertEqual(editor.new_gesture_binding(c, "touchpad", "pinch", "global", None)["fingers"], 2)
+        self.assertEqual(editor.new_gesture_binding(c, "touchpad", "swipe", "global", None)["fingers"], 3)
+        mouse = editor.new_gesture_binding(c, "mouse", "stroke", "global", None)
+        self.assertNotIn("fingers", mouse)
+        self.assertEqual(mouse["mouse_buttons"], ["right"])  # or every mouse movement is a stroke
+        self.assertNotIn("mouse_buttons", editor.new_gesture_binding(c, "mouse", "wheel", "global", None))
+        self.assertEqual(editor.finger_range("touchpad", "pinch"), (2, 4))
+        self.assertEqual(editor.finger_range("touchscreen", "swipe"), (1, 5))
+
+    def test_speed_shows_in_the_title(self):
+        self.assertEqual(d.gesture_title({"type": "swipe", "fingers": 3, "direction": "left", "speed": "fast"}),
+                         "Fast 3-finger swipe left")
+        self.assertEqual(d.gesture_title({"type": "circle", "direction": "clockwise"}), "Circle clockwise")
+
+
+class NewActionTests(unittest.TestCase):
+    def test_mouse_click_and_text_round_trip(self):
+        for mode, value in (("Click mouse button", "middle"), ("Type text", "Hi, there: {x}")):
+            actions = editor.build_actions(mode, {"on": "begin", "keys": "", "value": value})
+            self.assertEqual(editor.detect_mode(actions), (mode, {"on": "begin", "value": value}))
+        click = editor.build_actions("Click mouse button", {"on": "begin", "value": "middle"})[0]
+        self.assertEqual(d.action_steps(click), ["Middle click"])
+        text = editor.build_actions("Type text", {"on": "begin", "value": "hi"})[0]
+        self.assertEqual(d.action_steps(text), ['Type "hi"'])
+        with self.assertRaises(ValueError):
+            editor.build_actions("Type text", {"on": "begin", "value": ""})
+
+
 class ConditionTests(unittest.TestCase):
     ROWS = [
         ("Window", "is fullscreen", ""), ("Window", "is not maximized", ""),
