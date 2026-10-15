@@ -77,7 +77,7 @@ def render(config: cfg.Config) -> str:
         out += [f"# actuator:device {n} = {t}" for n, t in config.device_types.items()]
         out.append("")
     if config.prefs:
-        out.append("# Actuator's options (Options → Store all options in config.yaml). Safe to edit.")
+        out.append("# Actuator's options (Options → Store Preferences in Config). Safe to edit.")
         out += [f"# actuator:pref {k} = {v}" for k, v in config.prefs.items()]
         out.append("")
 
