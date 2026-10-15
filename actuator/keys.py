@@ -2,6 +2,7 @@
 
 from PySide6.QtCore import Qt
 
+from . import scancodes
 from .describe import KEY_NAMES
 
 ALIASES = {
@@ -16,6 +17,11 @@ ALIASES = {
 }
 MODIFIER_ORDER = ["leftctrl", "rightctrl", "leftshift", "rightshift", "leftalt", "rightalt", "leftmeta", "rightmeta"]
 
+# What the app shows → the key: so "KbdLightUp" or "Display", as shown, can be typed back in.
+SHOWN_AS = {}
+for _key, _shown in KEY_NAMES.items():
+    SHOWN_AS.setdefault(_shown.lower(), _key)
+
 
 def to_name(part: str) -> str:
     p = part.strip()
@@ -24,6 +30,8 @@ def to_name(part: str) -> str:
     low = p.lower()
     if low in ALIASES:
         return ALIASES[low]
+    if low in SHOWN_AS:
+        return SHOWN_AS[low]
     if low in KEY_NAMES or low.isidentifier():
         return low
     if len(low) == 1 and low.isalnum():
@@ -94,15 +102,23 @@ def from_key_event(event) -> str | None:
         parts.append("leftalt")
     if mods & Qt.KeyboardModifier.MetaModifier:
         parts.append("leftmeta")
-    if key in QT_KEYS:
-        name = QT_KEYS[key]
-    elif Qt.Key.Key_F1 <= key <= Qt.Key.Key_F35:
-        name = f"f{key - Qt.Key.Key_F1 + 1}"
-    elif Qt.Key.Key_A <= key <= Qt.Key.Key_Z or Qt.Key.Key_0 <= key <= Qt.Key.Key_9:
-        name = chr(key).lower()
-    else:
+    # InputActions matches keys by scancode, so the physical key is the right answer, whatever the
+    # layout, and it covers keys Qt has no name for (brightness, mic mute and other top-row keys).
+    name = scancodes.name(event.nativeScanCode()) or _qt_key_name(key)
+    if not name or name in MODIFIER_ORDER:
         return None
     return "+".join(parts + [name])
+
+
+def _qt_key_name(key: Qt.Key) -> str | None:
+    """Fallback when there's no scancode (not on Linux, or a synthetic event)."""
+    if key in QT_KEYS:
+        return QT_KEYS[key]
+    if Qt.Key.Key_F1 <= key <= Qt.Key.Key_F35:
+        return f"f{key - Qt.Key.Key_F1 + 1}"
+    if Qt.Key.Key_A <= key <= Qt.Key.Key_Z or Qt.Key.Key_0 <= key <= Qt.Key.Key_9:
+        return chr(key).lower()
+    return None
 
 
 # Qt mouse buttons → InputActions mouse button names.

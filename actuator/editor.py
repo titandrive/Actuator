@@ -242,12 +242,19 @@ class KeyField(QLineEdit):
         self.recording = True
         self._first = True
         self.setFocus()
+        # The red border switches Qt to stylesheet drawing, which is smaller: hold the size.
+        self._size_limits = (self.minimumSize(), self.maximumSize())
+        self.setFixedSize(self.size())
         self.setStyleSheet("QLineEdit { border: 2px solid #d24545; }")
 
     def stop(self):
         self.recording = False
         self._lone = None
         self.setStyleSheet("")
+        if getattr(self, "_size_limits", None):
+            self.setMinimumSize(self._size_limits[0])
+            self.setMaximumSize(self._size_limits[1])
+            self._size_limits = None
 
     def _add(self, combo: str):
         label = d.combo(combo)

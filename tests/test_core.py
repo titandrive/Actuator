@@ -337,6 +337,20 @@ class KeyTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             keys.parse_sequence("  ")
 
+    def test_top_row_keys_by_scancode(self):
+        from PySide6.QtGui import QKeyEvent
+        from PySide6.QtCore import QEvent, Qt
+        def press(qt_key, scan, mods=Qt.KeyboardModifier.NoModifier):
+            return keys.from_key_event(QKeyEvent(QEvent.Type.KeyPress, qt_key, mods, scan, 0, 0))
+        self.assertEqual(press(Qt.Key.Key_MonBrightnessUp, 225 + 8), "brightnessup")  # no Qt mapping
+        self.assertEqual(press(Qt.Key.Key_unknown, 248 + 8), "micmute")
+        self.assertEqual(press(Qt.Key.Key_Z, 21 + 8, Qt.KeyboardModifier.ControlModifier), "leftctrl+y")  # QWERTZ: physical Y
+        self.assertEqual(press(Qt.Key.Key_A, 0), "a")  # no scancode: falls back to the Qt key
+        self.assertIsNone(press(Qt.Key.Key_Control, 29 + 8))
+        self.assertEqual(d.combo("leftctrl+brightnessup"), "Ctrl+BrightnessUp")
+        self.assertEqual(keys.parse_combo("Ctrl+BrightnessUp"), "leftctrl+brightnessup")
+        self.assertEqual(keys.parse_combo("KbdLightUp"), "kbdillumup")  # as shown, typed back
+
     def test_actions_round_trip_through_forms(self):
         for mode, values in [("Press keys", {"on": "begin", "keys": "Ctrl+W"}),
                              ("Hold keys", {"keys": "F"}),

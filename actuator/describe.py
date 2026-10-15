@@ -14,6 +14,14 @@ KEY_NAMES = {
     "minus": "-", "equal": "=", "semicolon": ";", "apostrophe": "'",
     "grave": "`", "comma": ",", "dot": ".", "slash": "/", "backslash": "\\",
     "esc": "Esc", "delete": "Del", "insert": "Ins",
+    # Top-row and media keys. Written without spaces so they can be typed back in as shown.
+    "volumeup": "VolumeUp", "volumedown": "VolumeDown", "mute": "Mute", "micmute": "MicMute",
+    "playpause": "PlayPause", "nextsong": "NextSong", "previoussong": "PreviousSong",
+    "brightnessup": "BrightnessUp", "brightnessdown": "BrightnessDown",
+    "kbdillumup": "KbdLightUp", "kbdillumdown": "KbdLightDown", "kbdillumtoggle": "KbdLight",
+    "switchvideomode": "Display", "touchpad_toggle": "TouchpadToggle", "rfkill": "Airplane",
+    "calc": "Calculator", "search": "Search", "sysrq": "PrintScreen", "selectivescreenshot": "Screenshot",
+    "notification_center": "Notifications", "pickup_phone": "PickUp", "hangup_phone": "HangUp",
 }
 
 STAGES = {
