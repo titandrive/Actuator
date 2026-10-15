@@ -7,7 +7,7 @@ Names that aren't mapped (an app's own icon, like "firefox") still come from the
 from functools import lru_cache
 from pathlib import Path
 
-from PySide6.QtCore import QByteArray, QEvent, QObject, QRectF, QStandardPaths, Qt
+from PySide6.QtCore import QByteArray, QRectF, QStandardPaths, Qt
 from PySide6.QtGui import QIcon, QPainter, QPalette, QPixmap
 from PySide6.QtSvg import QSvgRenderer
 from PySide6.QtWidgets import QApplication, QMessageBox
@@ -101,24 +101,34 @@ MESSAGE_ICONS = {
 }
 
 
-class _MessageBoxIcons(QObject):
-    def eventFilter(self, obj, event):
-        if isinstance(obj, QMessageBox):
-            if not obj.testOption(QMessageBox.Option.DontUseNativeDialog):
-                # Plasma otherwise shows its own "native" box, theme icon and all, in place of
-                # this one. Set on the box's first event (its title, while being built), before
-                # Qt decides whether to go native.
-                obj.setOption(QMessageBox.Option.DontUseNativeDialog, True)
-            if event.type() == QEvent.Type.Show and obj.icon() in MESSAGE_ICONS:
-                name, color = MESSAGE_ICONS[obj.icon()]
-                color = color or obj.palette().color(QPalette.ColorRole.Highlight).name()
-                obj.setIconPixmap(_pixmap(name, color, 40))
-        return False
-
-
-_message_box_icons = _MessageBoxIcons()
+def _prepare(box: QMessageBox):
+    # Plasma otherwise shows its own "native" box, theme icon and all, in place of this one.
+    box.setOption(QMessageBox.Option.DontUseNativeDialog, True)
+    if box.icon() in MESSAGE_ICONS:
+        name, color = MESSAGE_ICONS[box.icon()]
+        color = color or box.palette().color(QPalette.ColorRole.Highlight).name()
+        box.setIconPixmap(_pixmap(name, color, 40))
 
 
 def use_lucide_message_boxes(app: QApplication):
-    """Every QMessageBox, including the static question()/warning() ones, gets a Lucide icon."""
-    app.installEventFilter(_message_box_icons)
+    """Every QMessageBox, including the static question()/warning() ones, gets a Lucide icon.
+    Done by wrapping QMessageBox's entry points rather than an app-wide event filter, which
+    would run Python on every event in the app and make everything lag."""
+    original_exec = QMessageBox.exec
+
+    def exec_(box):
+        _prepare(box)
+        return original_exec(box)
+    QMessageBox.exec = exec_
+
+    def static(kind):
+        def show(parent, title, text, buttons=QMessageBox.StandardButton.Ok,
+                 default=QMessageBox.StandardButton.NoButton):
+            box = QMessageBox(kind, title, text, buttons, parent)
+            box.setDefaultButton(default)
+            return QMessageBox.StandardButton(box.exec())
+        return staticmethod(show)
+    QMessageBox.question = static(QMessageBox.Icon.Question)
+    QMessageBox.information = static(QMessageBox.Icon.Information)
+    QMessageBox.warning = static(QMessageBox.Icon.Warning)
+    QMessageBox.critical = static(QMessageBox.Icon.Critical)
