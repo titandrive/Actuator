@@ -84,7 +84,7 @@ Actuator only commits `config.yaml` (and `README.md`, below); anything else in t
 alone. Commit messages describe the change, for example `Actuator: Firefox: ~ Meta+W: Ctrl+W → Ctrl+T`.
 
 Turn on Generate README and Actuator will automatically generate a `README.md` that lists every binding
-in readable tables, grouped by folder and app. For an example of how a repository looks, see
+in readable tables, grouped by folder and app. It updates automatically with every commit and push. For an example of how a repository looks, see
 [titandrive/inputaction_config](https://github.com/titandrive/inputaction_config).
 
 You set up the repository once yourself:
