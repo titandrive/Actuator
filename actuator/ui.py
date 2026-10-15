@@ -2070,6 +2070,7 @@ class MainWindow(QMainWindow):
             data["strokes"] = [stroke]
         self.config.add_binding(section, data)
         self._refresh(lambda p: p.get("binding") is not None and p["binding"].data is data)
+        devices_mod.check_touchpad_access(self, section, trigger_type)
 
     def _add_shortcut(self, scope, app):
         """Like adding a gesture: a new row, set up in the editor (its keys in the Trigger card)."""

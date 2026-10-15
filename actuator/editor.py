@@ -17,6 +17,7 @@ from . import apps
 from . import conditions as conds
 from . import config as cfg
 from . import describe as d
+from . import devices
 from . import keys
 from . import pause
 from .widgets import Section, ToggleRow, label_width, tidy_form
@@ -481,13 +482,16 @@ class StrokeRecorder(QDialog):
 
 
 def shortcut_clash(config: cfg.Config, combo: str) -> str | None:
-    """Why this combo can't be a keyboard shortcut here, or None. A combo one of the mouse's
-    buttons sends belongs to that button, on the Mouse tab."""
+    """Why this combo can't be a keyboard shortcut here, or None. InputActions only starts a
+    shortcut whose first key is a modifier, so a lone key never fires; and a combo one of the
+    mouse's buttons sends belongs to that button, on the Mouse tab."""
+    if combo.split("+")[0] not in keys.MODIFIER_ORDER:
+        return f"Must start with Ctrl, Shift, Alt or Meta. Try Meta+{d.combo(combo)}."
     button = next((b for b in config.buttons if b.src == combo), None)
     if button:
         name = config.button_names.get(combo)
-        who = f"Your {name} mouse button sends" if name else "One of your mouse buttons sends"
-        return f"{who} {d.combo(combo)}. Bind it on the Mouse tab instead."
+        who = f"Your {name} button" if name else "A mouse button"
+        return f"{who} sends this. Bind it on the Mouse tab."
     return None
 
 
@@ -955,7 +959,8 @@ class BindingEditor(QWidget):
         self.keys_record.setChecked(False)
         if is_shortcut:
             self.keys_field.setText(d.shortcut(g.get("shortcut") or []))
-            self._show_keys_problem(None if g.get("shortcut") else "No keys yet. Click Record and press the combo.")
+            combo = cfg.shortcut_key(g.get("shortcut") or [])
+            self._show_keys_problem(shortcut_clash(self.config, combo) if combo else None)
         self.when_form.setRowVisible(self.strokes_row, t == "stroke")
         n = len(g.get("strokes") or []) if isinstance(g.get("strokes"), list) else (1 if g.get("strokes") else 0)
         self.strokes_label.setText(f"{n} recorded" if n else "None yet. Record one, or this gesture won't work.")
@@ -1115,6 +1120,7 @@ class BindingEditor(QWidget):
         self.show_binding(self.title.text(), self.binding)  # rows for the new type
         if new == "stroke" and not g.get("strokes"):
             self._record_stroke()
+        devices.check_touchpad_access(self, self.binding.section, new)
 
     def _keys_record_toggled(self, on: bool):
         if on:
@@ -1131,8 +1137,6 @@ class BindingEditor(QWidget):
             self.keys_field.stop()
             self.keys_record.setText("Record")
             self.keys_field.setPlaceholderText("")
-            if self.binding and self.binding.type == "shortcut" and not self.binding.data.get("shortcut"):
-                self._show_keys_problem("No keys yet. Click Record and press the combo.")
 
     def _show_keys_problem(self, problem: str | None):
         self.keys_error.setText(problem or "")
@@ -1146,8 +1150,7 @@ class BindingEditor(QWidget):
         if self._loading or not self.binding or self.binding.type != "shortcut" or self.binding.button:
             return
         if not self.keys_field.text().strip():
-            if not self.keys_record.isChecked():
-                self._show_keys_problem("No keys yet. Click Record and press the combo.")
+            self._show_keys_problem(None)
             return
         try:
             combo = keys.parse_combo(self.keys_field.text())

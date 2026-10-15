@@ -13,7 +13,7 @@ from PySide6.QtCore import QSettings  # noqa: E402
 from PySide6.QtWidgets import QApplication, QMessageBox  # noqa: E402
 
 from actuator import config as cfg  # noqa: E402
-from actuator import pause, writer  # noqa: E402
+from actuator import devices, pause, writer  # noqa: E402
 
 APP = QApplication.instance() or QApplication([])
 
@@ -153,6 +153,7 @@ class AppTest(TempConfig):
         patch(ui, "effect_loaded", lambda: True)
         patch(ui, "kwin_pid", lambda: "1")
         patch(pause, "_run", lambda *a: True)
+        patch(devices, "touchpad_access_missing", lambda: False)
         settings_file = str(self.dir / "settings.ini")
         patch(ui, "QSettings", lambda *a: QSettings(settings_file, QSettings.Format.IniFormat))
         self.answers = {}  # dialog title/text fragment -> button to press

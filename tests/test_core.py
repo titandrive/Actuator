@@ -162,6 +162,15 @@ class WindowClassTests(unittest.TestCase):
         self.assertEqual(apps.window_class("firefox", ""), "firefox")
 
 
+class TouchpadAccessTests(unittest.TestCase):
+    def test_touchpad_paths_from_device_list(self):
+        listing = ("[Keyboard] AT Translated Set 2 keyboard\n  Path: /dev/input/event2\n"
+                   "[Touchpad] PIXA3854:00 093A:1343 Touchpad\n  Path: /dev/input/event9\n  Properties:\n"
+                   "[Mouse] BSK V3 PRO Mouse\n  Path: /dev/input/event21\n")
+        from actuator import devices
+        self.assertEqual(devices.touchpad_paths(listing), ["/dev/input/event9"])
+
+
 class StrokeTests(unittest.TestCase):
     def test_stroke_actions_run_on_end(self):
         self.assertEqual(editor.default_stage("stroke"), "end")
@@ -183,6 +192,7 @@ class ShortcutTests(TempConfig):
         b = next(x for x in c.bindings if x.id == "firefox_leftctrl_a")
         self.assertIsNone(b.button)  # a keyboard shortcut, not a mouse button
         self.assertIsNone(editor.shortcut_clash(c, "leftctrl+a"))
+        self.assertIn("Must start with Ctrl", editor.shortcut_clash(c, "media"))   # a lone key never fires
         c.add_button("leftmeta+w", "Side Button")
         self.assertIn("Side Button", editor.shortcut_clash(c, "leftmeta+w"))
 

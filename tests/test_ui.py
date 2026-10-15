@@ -100,7 +100,7 @@ class EditingTests(AppTest):
         page = self.tab("Keyboard")
         ed = page.editor
         self.assertEqual(page.tree.currentItem().text(0), "New shortcut")
-        self.assertIn("No keys yet", ed.keys_error.text())
+        self.assertFalse(ed.keys_error.text())       # no nagging before keys are set
         warned = []
         with mock.patch.object(QMessageBox, "warning", staticmethod(lambda *a, **k: warned.append(a[2]))):
             self.w.save()

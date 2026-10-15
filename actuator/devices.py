@@ -1,11 +1,12 @@
 """Device settings: InputActions' device_rules, shown per device type and per named device."""
 
+import os
 import re
 import subprocess
 from dataclasses import dataclass
 
-from PySide6.QtCore import Qt, Signal
-from PySide6.QtGui import QIcon
+from PySide6.QtCore import Qt, QUrl, Signal
+from PySide6.QtGui import QDesktopServices, QFontDatabase, QGuiApplication, QIcon
 from PySide6.QtWidgets import (
     QDialog, QDialogButtonBox, QFrame, QHBoxLayout, QLabel, QLineEdit, QMessageBox,
     QPlainTextEdit, QPushButton, QScrollArea, QSlider, QSplitter, QToolButton,
@@ -199,6 +200,88 @@ def connected_devices() -> list[tuple[str, str]]:
             if t in TYPES:
                 found.append((t, m.group(2).strip()))
     return found
+
+
+# Touchpad clicks, taps and one-finger gestures need InputActions to read the touchpad itself,
+# which takes a udev rule from its install guide's "Additional setup".
+TOUCHPAD_RULE = 'ENV{ID_INPUT_TOUCHPAD}=="1", TAG+="uaccess"'
+TOUCHPAD_RULE_COMMAND = f"echo '{TOUCHPAD_RULE}' | sudo tee /etc/udev/rules.d/71-touchpad.rules"
+TOUCHPAD_DOCS_URL = ("https://wiki.inputactions.org/main/getting-started/installation/kwin.html"
+                     "#additional-setup-optional")
+TOUCHPAD_ACCESS_TYPES = {"click", "tap"}
+
+
+def touchpad_paths(listing: str) -> list[str]:
+    """Device files of the touchpads in `inputactions devices list` output."""
+    paths, in_touchpad = [], False
+    for line in listing.splitlines():
+        if line.startswith("["):
+            in_touchpad = line.startswith("[Touchpad]")
+        elif in_touchpad and (m := re.match(r"\s*Path:\s*(\S+)", line)):
+            paths.append(m.group(1))
+    return paths
+
+
+def touchpad_access_missing() -> bool:
+    """True when there's a touchpad InputActions can't read directly (the udev rule is missing).
+    KWin runs as this user, so this user's access is InputActions' access."""
+    try:
+        out = subprocess.run(["inputactions", "devices", "list"], capture_output=True, text=True, timeout=5).stdout
+    except (OSError, subprocess.TimeoutExpired):
+        return False
+    out = re.sub(r"\x1b\[[0-9;]*m", "", out)
+    return any(not os.access(p, os.R_OK | os.W_OK) for p in touchpad_paths(out) if os.path.exists(p))
+
+
+def touchpad_access_dialog(parent):
+    """Explains the missing udev rule, with the command to copy and a link to the docs."""
+    dialog = QDialog(parent)
+    dialog.setWindowTitle("Touchpad setup needed")
+    icon = QLabel()
+    icon.setPixmap(icons.lucide("triangle-alert", "#c58a00").pixmap(32, 32))
+    text = QLabel("Touchpad clicks and taps only work once InputActions can read your touchpad "
+                  "directly. That takes one command, then logging out and back in:")
+    text.setWordWrap(True)
+    # A selectable label: it wraps and grows to fit, so the whole command is always in view.
+    command = QLabel(TOUCHPAD_RULE_COMMAND)
+    command.setWordWrap(True)
+    command.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
+    command.setFont(QFontDatabase.systemFont(QFontDatabase.SystemFont.FixedFont))
+    command.setFrameShape(QFrame.Shape.StyledPanel)
+    command.setMargin(8)
+    command.setStyleSheet("QLabel { background: palette(base); border-radius: 4px; }")
+    copy = QPushButton(icons.icon("edit-copy"), "Copy")
+    copy.clicked.connect(lambda: (QGuiApplication.clipboard().setText(TOUCHPAD_RULE_COMMAND),
+                                  copy.setText("Copied")))
+    row = QHBoxLayout()
+    row.addWidget(command, 1)
+    row.addWidget(copy, 0, Qt.AlignmentFlag.AlignTop)
+    docs = QPushButton(icons.lucide("book-open"), "Open docs")
+    docs.clicked.connect(lambda: QDesktopServices.openUrl(QUrl(TOUCHPAD_DOCS_URL)))
+    close = QPushButton("Close")
+    close.setDefault(True)
+    close.clicked.connect(dialog.accept)
+    buttons = QHBoxLayout()
+    buttons.addWidget(docs)
+    buttons.addStretch(1)
+    buttons.addWidget(close)
+    top = QHBoxLayout()
+    top.addWidget(icon, 0, Qt.AlignmentFlag.AlignTop)
+    top.addWidget(text, 1)
+    layout = QVBoxLayout(dialog)
+    layout.addLayout(top)
+    layout.addLayout(row)
+    layout.addLayout(buttons)
+    layout.setContentsMargins(20, 18, 20, 16)
+    layout.setSpacing(12)
+    dialog.setFixedWidth(520)
+    dialog.exec()
+
+
+def check_touchpad_access(parent, section: str, trigger_type: str):
+    """Warn, once per binding being made, if this touchpad trigger can't work yet."""
+    if section == "touchpad" and trigger_type in TOUCHPAD_ACCESS_TYPES and touchpad_access_missing():
+        touchpad_access_dialog(parent)
 
 
 def guess_type(rule) -> str:
