@@ -7,7 +7,7 @@ from dataclasses import dataclass
 from PySide6.QtCore import Qt, Signal
 from PySide6.QtGui import QIcon
 from PySide6.QtWidgets import (
-    QCheckBox, QDialog, QDialogButtonBox, QFrame, QHBoxLayout, QLabel, QLineEdit, QMessageBox,
+    QDialog, QDialogButtonBox, QFrame, QHBoxLayout, QLabel, QLineEdit, QMessageBox,
     QPlainTextEdit, QPushButton, QScrollArea, QSlider, QSplitter, QToolButton,
     QTreeWidget, QTreeWidgetItem, QVBoxLayout, QWidget,
 )
@@ -16,6 +16,7 @@ from ruamel.yaml import YAML
 from . import icons
 from . import config as cfg
 from . import describe as d
+from .widgets import Toggle, ToggleRow
 
 TYPES = {  # key → (label, icon)
     "mouse": ("Mouse", "input-mouse"),
@@ -282,7 +283,7 @@ class SettingRow(QWidget):
         row.setContentsMargins(0, 6, 0, 6)
         row.addWidget(text, 1)
         if s.is_bool:
-            self.check = QCheckBox()
+            self.check = Toggle()
             self.check.setChecked(bool(value))
             self.check.toggled.connect(lambda on: self.changed.emit(on))
             row.addWidget(self.check)
@@ -560,14 +561,27 @@ class DeviceSettingsDialog(QDialog):
 def confirm_open(parent, settings) -> bool:
     if settings.value("skip_device_warning", False, type=bool):
         return True
-    box = QMessageBox(QMessageBox.Icon.Warning, "Device settings",
-                      "These change how InputActions reads your mouse, touchpad and touchscreen: swipe "
-                      "angles, thresholds and timeouts.\n\nWrong values can make gestures hard to trigger "
-                      "or fire by accident. Saved changes can be undone from ☰ → Restore.",
-                      QMessageBox.StandardButton.Open | QMessageBox.StandardButton.Cancel, parent)
-    skip = QCheckBox("Don't show this again")
-    box.setCheckBox(skip)
-    if box.exec() != QMessageBox.StandardButton.Open:
+    dialog = QDialog(parent)
+    dialog.setWindowTitle("Device settings")
+    icon = QLabel()
+    icon.setPixmap(icons.lucide("triangle-alert", "#c58a00").pixmap(32, 32))
+    text = QLabel("These change how InputActions reads your mouse, touchpad and touchscreen: swipe "
+                  "angles, thresholds and timeouts.\n\nWrong values can make gestures hard to trigger "
+                  "or fire by accident. Saved changes can be undone from ☰ → Restore.")
+    text.setWordWrap(True)
+    skip = ToggleRow("Don't show this again")
+    buttons = QDialogButtonBox(QDialogButtonBox.StandardButton.Open | QDialogButtonBox.StandardButton.Cancel)
+    buttons.accepted.connect(dialog.accept)
+    buttons.rejected.connect(dialog.reject)
+    top = QHBoxLayout()
+    top.addWidget(icon, 0, Qt.AlignmentFlag.AlignTop)
+    top.addWidget(text, 1)
+    layout = QVBoxLayout(dialog)
+    layout.addLayout(top)
+    layout.addWidget(skip)
+    layout.addWidget(buttons)
+    dialog.resize(440, 0)
+    if not dialog.exec():
         return False
     if skip.isChecked():
         settings.setValue("skip_device_warning", True)

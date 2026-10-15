@@ -15,7 +15,7 @@ from PySide6.QtGui import (
 )
 from PySide6.QtWidgets import (
     QAbstractButton, QApplication, QDialog, QTextBrowser, QListWidget, QListWidgetItem, QToolTip, QFormLayout, QSpinBox, QDialogButtonBox, QFileDialog, QFrame, QGridLayout, QHBoxLayout,
-    QCheckBox, QComboBox, QGroupBox, QInputDialog, QLabel, QLineEdit, QMainWindow, QMenu,
+    QComboBox, QGroupBox, QInputDialog, QLabel, QLineEdit, QMainWindow, QMenu,
     QMessageBox, QPushButton, QScrollArea, QSizePolicy,
     QSplitter, QStackedWidget, QTabWidget, QToolBar, QToolButton, QTreeWidget,
     QTreeWidgetItem, QVBoxLayout, QWidget,
@@ -37,6 +37,7 @@ from . import pause
 from . import versions
 from . import writer
 from . import yaml_editor
+from .widgets import Toggle
 from . import devices as devices_mod
 from .editor import GESTURE_TYPES, BindingEditor, new_button_binding, new_gesture_binding, record_stroke
 
@@ -406,57 +407,6 @@ def github_icon(color: QColor, size: int = 16) -> QPixmap:
     painter.end()
     pixmap.setDevicePixelRatio(2)
     return pixmap
-
-
-class Toggle(QAbstractButton):
-    """A sliding on/off switch, drawn in the theme's accent color."""
-
-    def __init__(self, checked: bool = False, parent=None):
-        super().__init__(parent)
-        self.setCheckable(True)
-        self.setChecked(checked)
-        self.setCursor(Qt.CursorShape.PointingHandCursor)
-        self._pos = 1.0 if checked else 0.0
-        self._anim = QPropertyAnimation(self, b"knob", self)
-        self._anim.setDuration(120)
-        self.toggled.connect(self._animate)
-
-    def sizeHint(self):
-        return QSize(40, 22)
-
-    def _animate(self, on: bool):
-        self._anim.stop()
-        self._anim.setStartValue(self._pos)
-        self._anim.setEndValue(1.0 if on else 0.0)
-        self._anim.start()
-
-    def _get_knob(self) -> float:
-        return self._pos
-
-    def _set_knob(self, value: float):
-        self._pos = value
-        self.update()
-
-    knob = Property(float, _get_knob, _set_knob)
-
-    def paintEvent(self, _event):
-        p = QPainter(self)
-        p.setRenderHint(QPainter.RenderHint.Antialiasing)
-        r = self.rect().adjusted(1, 1, -1, -1)
-        on = self.palette().highlight().color()
-        off = self.palette().placeholderText().color()
-        track = QColor(on) if self.isChecked() else QColor(off)
-        if not self.isChecked():
-            track.setAlpha(110)
-        if not self.isEnabled():
-            track.setAlpha(60)
-        p.setPen(Qt.PenStyle.NoPen)
-        p.setBrush(track)
-        p.drawRoundedRect(r, r.height() / 2, r.height() / 2)
-        d = r.height() - 4
-        x = r.left() + 2 + self._pos * (r.width() - d - 4)
-        p.setBrush(QColor("#ffffff") if self.isEnabled() else QColor(220, 220, 220))
-        p.drawEllipse(QRectF(x, r.top() + 2, d, d))
 
 
 CARD_STYLE = ("QFrame#card { background: rgba(127, 127, 127, 0.07); "

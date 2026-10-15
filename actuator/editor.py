@@ -5,7 +5,8 @@ import re
 from PySide6.QtCore import QProcess, Qt, Signal
 from PySide6.QtGui import QIcon
 from PySide6.QtWidgets import (
-    QCheckBox, QComboBox, QDialog, QDialogButtonBox, QFormLayout, QGroupBox, QHBoxLayout, QLabel, QLineEdit,
+    QSizePolicy,
+    QComboBox, QDialog, QDialogButtonBox, QFormLayout, QGroupBox, QHBoxLayout, QLabel, QLineEdit,
     QMessageBox, QPlainTextEdit, QPushButton, QSpinBox, QStackedWidget, QToolButton, QTreeWidget,
     QTreeWidgetItem, QVBoxLayout, QWidget,
 )
@@ -18,6 +19,7 @@ from . import config as cfg
 from . import describe as d
 from . import keys
 from . import pause
+from .widgets import ToggleRow
 
 # Trigger types each device section supports.
 GESTURE_TYPES = {
@@ -374,7 +376,7 @@ class ConditionBuilder(QWidget):
         self.mode_row = QWidget()
         mr = QHBoxLayout(self.mode_row)
         mr.setContentsMargins(0, 0, 0, 0)
-        self.mode_prefix = QLabel("and")
+        self.mode_prefix = QLabel("Match")
         mr.addWidget(self.mode_prefix)
         mr.addWidget(self.mode)
         mr.addStretch(1)
@@ -408,11 +410,9 @@ class ConditionBuilder(QWidget):
         if parts is None:
             return
         self.app, mode, self.rows = parts[0], parts[1], list(parts[2])
-        self.locked.setVisible(bool(self.app))
-        if self.app:
-            self.locked.setText(f"{icons.img('lock')} {d.condition(self.app)}  <span style='color:palette(placeholder-text)'>"
-                                "(from the sidebar)</span>")
-        self.mode_prefix.setText("and" if self.app else "When")
+        # The app condition isn't shown: the sidebar already says which app this is for, and it's
+        # kept as is when the other conditions change.
+        self.locked.setVisible(False)
         self.mode.blockSignals(True)
         self.mode.setCurrentIndex(max(self.mode.findData(mode), 0))
         self.mode.blockSignals(False)
@@ -425,9 +425,7 @@ class ConditionBuilder(QWidget):
                 w.deleteLater()
         for i, row in enumerate(self.rows):
             self.rows_box.addWidget(self._row_widget(i, row))
-        self.mode_row.setVisible(len(self.rows) > 1 or (len(self.rows) == 1 and not self.app))
-        if not self.app and len(self.rows) <= 1:
-            self.mode_prefix.setText("When")
+        self.mode_row.setVisible(len(self.rows) > 1)  # combining only matters with two or more
         self._update_summary()
 
     def _row_widget(self, i: int, row) -> QWidget:
@@ -548,7 +546,7 @@ class BindingEditor(QWidget):
         head.addWidget(self.delete_button)
 
         # When
-        self.when_box = QGroupBox("When")
+        self.when_box = QGroupBox("Trigger")
         self.when_form = QFormLayout(self.when_box)
         self.trigger_label = QLabel()
         self.type_box = QComboBox()  # for gestures, whose type can be changed
@@ -573,9 +571,11 @@ class BindingEditor(QWidget):
         sr.addStretch(1)
         self.fingers = QSpinBox(minimum=1, maximum=5)
         self.direction = QComboBox()
-        self.instant = QCheckBox("Fire as soon as the button goes down")
-        self.block = QCheckBox("Block the normal input while this runs")
-        self.when_form.addRow("Trigger", trigger_row)
+        self.instant = ToggleRow("Fire as soon as the button goes down")
+        self.block = ToggleRow("Override default system input")
+        self.block.setToolTip("When on, only your action runs. When off, the app also gets the original "
+                              "button press or gesture.")
+        self.when_form.addRow("Type", trigger_row)
         self.when_form.addRow("Strokes", self.strokes_row)
         self.when_form.addRow("Fingers", self.fingers)
         self.when_form.addRow("Direction", self.direction)
@@ -587,13 +587,13 @@ class BindingEditor(QWidget):
         self.block.toggled.connect(self._trigger_edited)
 
         # Only if
-        self.cond_box = QGroupBox("Only if")
+        self.cond_box = QGroupBox("Condition (optional)")
         self.conditions = ConditionBuilder()
         self.conditions.changed.connect(self._conditions_edited)
         QVBoxLayout(self.cond_box).addWidget(self.conditions)
 
         # Do
-        self.do_box = QGroupBox("Do")
+        self.do_box = QGroupBox("Action")
         self.mode = QComboBox()
         self.mode.addItems(MODES)
         self.mode.currentTextChanged.connect(self._mode_changed)
@@ -629,6 +629,10 @@ class BindingEditor(QWidget):
         self.value_hint.setStyleSheet("color: palette(placeholder-text);")
         self.error = QLabel()
         self.error.setStyleSheet("color: #d24545;")
+        self.error.setVisible(False)  # shown only when there's something to say
+        _set_text = self.error.setText
+        self.error.setText = lambda t: (_set_text(t), self.error.setVisible(bool(t)))
+        self.error.clear = lambda: self.error.setText("")
         self.actions_yaml = QPlainTextEdit()
         self.actions_yaml.setMinimumHeight(140)
         self.actions_apply = QPushButton("Apply actions")
@@ -649,7 +653,7 @@ class BindingEditor(QWidget):
         self.do_stack.addWidget(self.simple)
         self.do_stack.addWidget(self.custom)
         do_form = QFormLayout(self.do_box)
-        do_form.addRow("Action", self.mode)
+        do_form.addRow("Type", self.mode)
         do_form.addRow(self.do_stack)
         do_form.addRow(self.error)
 
@@ -746,7 +750,7 @@ class BindingEditor(QWidget):
     def _fill_do(self, mode: str, values: dict):
         self.mode.setCurrentText(mode)
         custom = mode == "Custom (YAML)"
-        self.do_stack.setCurrentWidget(self.custom if custom else self.simple)
+        self._show_page(self.custom if custom else self.simple)
         if custom:
             self.actions_yaml.setPlainText(d.to_yaml(self.binding.data.get("actions") or []))
             return
@@ -818,6 +822,15 @@ class BindingEditor(QWidget):
         if self.binding and self.binding.data.pop("strokes", None) is not None:
             self._commit()
             self.show_binding(self.title.text(), self.binding)
+
+    def _show_page(self, page: QWidget):
+        """Show one page of the Action stack, sized to that page alone: a stack is otherwise as
+        tall as its tallest page, leaving empty space under the short form."""
+        for w in (self.simple, self.custom):
+            w.setSizePolicy(QSizePolicy.Policy.Preferred,
+                            QSizePolicy.Policy.Preferred if w is page else QSizePolicy.Policy.Ignored)
+        self.do_stack.setCurrentWidget(page)
+        self.do_stack.adjustSize()
 
     def _conditions_edited(self):
         if self._loading or not self.binding:
