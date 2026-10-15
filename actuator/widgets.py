@@ -117,12 +117,18 @@ class Section(QWidget):
         v.addWidget(self.card)
 
 
-def tidy_form(form: QFormLayout, margins: bool = True):
+def label_width(widget: QWidget, labels: list[str]) -> int:
+    """Wide enough for the longest label in the widget's own font (fonts vary a lot in width)."""
+    fm = widget.fontMetrics()
+    return max(fm.horizontalAdvance(t) for t in labels) + 4
+
+
+def tidy_form(form: QFormLayout, margins: bool = True, width: int = LABEL_WIDTH):
     """Left-aligned labels in a fixed-width column, even spacing, controls at their natural width."""
     form.setLabelAlignment(Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter)
     form.setFormAlignment(Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignTop)
     form.setFieldGrowthPolicy(QFormLayout.FieldGrowthPolicy.FieldsStayAtSizeHint)
-    form.setHorizontalSpacing(14)
+    form.setHorizontalSpacing(12)
     form.setVerticalSpacing(10)
     if margins:
         form.setContentsMargins(14, 12, 14, 12)
@@ -131,4 +137,4 @@ def tidy_form(form: QFormLayout, margins: bool = True):
     for i in range(form.rowCount()):
         item = form.itemAt(i, QFormLayout.ItemRole.LabelRole)
         if item and item.widget():
-            item.widget().setFixedWidth(LABEL_WIDTH)
+            item.widget().setFixedWidth(width)

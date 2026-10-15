@@ -1930,7 +1930,11 @@ class MainWindow(QMainWindow):
             menu.addSeparator()
             menu.addAction(icons.lucide("sticky-note"), "Edit note", lambda: page.tree.editItem(item, 2))
         if item and isinstance(p, dict) and p.get("src"):  # only button rows can be renamed
+            src = p["src"]
             menu.addAction(icons.icon("edit-rename"), "Rename…", lambda: page.tree.editItem(item, 0))
+            if self.config.button_names.get(src):
+                menu.addAction(icons.lucide("rotate-ccw"), f"Reset name to {d.button_label(src)}",
+                               lambda: self._reset_button_name(src))
         if binding:
             menu.addSeparator()
             menu.addAction(icons.icon("edit-delete"), "Delete", page.editor._delete)
@@ -2085,6 +2089,11 @@ class MainWindow(QMainWindow):
             return
         self.apply_now(lambda c: c.rename_button(src, new if new != d.button_label(src) else src))
         self._show_scope(*self.current, select=lambda q: q.get("src") == src)
+
+    def _reset_button_name(self, src: str):
+        """Back to what the button sends (e.g. "Meta+W"), everywhere it's shown."""
+        if self.apply_now(lambda c: c.rename_button(src, src)):
+            self._show_scope(*self.current, select=lambda q: q.get("src") == src)
 
     def _gesture_page(self, scope, app, section, select=None) -> QWidget:
         where = scope_title(scope, app)

@@ -209,7 +209,7 @@ class DiffTests(TempConfig):
         other.data["device_rules"][0]["swipe"]["angle_tolerance"] = 30
         other.folders["Games"] = ["factorio"]
         g = diffing.changes(cur, other)
-        self.assertIn(("~", "forward", "E", "Q"), g["Factorio"])
+        self.assertIn(("~", "Forward", "E", "Q"), g["Factorio"])
         self.assertIn(("−", "3-finger swipe up", "Ctrl+PgUp", "removed"), g["Firefox"])
         self.assertTrue(any(m == "~" and "4 fingers" in a for m, _w, _b, a in g["Global"]))  # paired, not -/+
         self.assertIn(("~", "Touchpad: swipe angle tolerance", "45", "30"), g["Device settings"])

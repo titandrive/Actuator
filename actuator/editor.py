@@ -19,7 +19,7 @@ from . import config as cfg
 from . import describe as d
 from . import keys
 from . import pause
-from .widgets import Section, ToggleRow, tidy_form
+from .widgets import Section, ToggleRow, label_width, tidy_form
 
 # Trigger types each device section supports.
 GESTURE_TYPES = {
@@ -581,7 +581,9 @@ class BindingEditor(QWidget):
         self.when_form.addRow("Direction", self.direction)
         self.when_form.addRow("", self.instant)
         self.when_form.addRow("", self.block)
-        tidy_form(self.when_form)
+        # One label column for every card, sized to the longest label in the user's font.
+        self._label_w = label_width(self, ["Type", "Strokes", "Fingers", "Direction", "When", "Value"])
+        tidy_form(self.when_form, width=self._label_w)
         self.fingers.valueChanged.connect(self._trigger_edited)
         self.direction.currentTextChanged.connect(self._trigger_edited)
         self.instant.toggled.connect(self._trigger_edited)
@@ -646,7 +648,7 @@ class BindingEditor(QWidget):
         simple_form.addRow("When", self.stage)
         simple_form.addRow("Value", value_row)
         simple_form.addRow("", self.value_hint)
-        tidy_form(simple_form, margins=False)  # nested in the Action card: same label column as its Type row
+        tidy_form(simple_form, margins=False, width=self._label_w)  # nested in the Action card: same label column as its Type row
         self.custom = QWidget()
         custom_layout = QVBoxLayout(self.custom)
         custom_layout.setContentsMargins(0, 0, 0, 0)
@@ -660,7 +662,7 @@ class BindingEditor(QWidget):
         do_form.addRow("Type", self.mode)
         do_form.addRow(self.do_stack)
         do_form.addRow(self.error)
-        tidy_form(do_form)
+        tidy_form(do_form, width=self._label_w)
 
         # Whole-binding YAML
         self.yaml_box = Section("YAML for this binding")
@@ -725,6 +727,11 @@ class BindingEditor(QWidget):
                 self.type_box.addItem(t.capitalize(), t)
             self.type_box.setCurrentIndex(self.type_box.findData(t))
             self.type_box.blockSignals(False)
+        elif b.button:
+            # Press vs shortcut is InputActions' business: to the user it's all a mouse button.
+            raw = d.button_label(b.button)
+            name = self.config.button_names.get(b.button) or raw
+            self.trigger_label.setText(f"Mouse button · {name}" + (f"  (sends {raw})" if name != raw else ""))
         else:
             self.trigger_label.setText(" · ".join(d.trigger_parts({"type": t, **{
                 k: g[k] for k in ("mouse_buttons", "shortcut") if k in g}})))

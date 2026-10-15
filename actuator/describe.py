@@ -42,7 +42,8 @@ def shortcut(keys) -> str:
 
 
 def button_label(src: str) -> str:
-    return combo(src) if "+" in src else src
+    """How a button reads in the app: "forward" → "Forward", "leftmeta+w" → "Meta+W"."""
+    return combo(src) if "+" in src else src[:1].upper() + src[1:]
 
 
 def token(t) -> str:

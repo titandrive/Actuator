@@ -28,7 +28,7 @@ class StartupTests(AppTest):
         self.pick("Global")
         self.assertEqual(list(self.tab("Mouse").rows()), [])
         self.pick("Factorio")
-        self.assertEqual([r.text(0) for r in self.tab("Mouse").rows()], ["forward", "back"])
+        self.assertEqual([r.text(0) for r in self.tab("Mouse").rows()], ["Forward", "Back"])
 
     def test_complex_bindings_appear_under_global(self):
         self.pick("Global")
@@ -93,10 +93,18 @@ class EditingTests(AppTest):
         APP.processEvents()
         self.assertFalse(any(b.type == "pinch" for b in self.w.config.bindings_for("app", "firefox")))
 
+    def test_reset_button_name(self):
+        self.w.apply_now(lambda c: c.rename_button("forward", "Side 1"))
+        self.pick("Factorio")
+        self.assertIn("Side 1", [r.text(0) for r in self.tab("Mouse").rows()])
+        self.w._reset_button_name("forward")
+        self.assertNotIn("forward", self.disk().button_names)
+        self.assertIn("Forward", [r.text(0) for r in self.tab("Mouse").rows()])
+
     def test_rename_button_saves_instantly(self):
         self.pick("Factorio")
         page = self.tab("Mouse")
-        row = self.select_row(page, "forward")
+        row = self.select_row(page, "Forward")
         row.setText(0, "Side button 1")
         APP.processEvents()
         self.assertEqual(self.disk().button_names.get("forward"), "Side button 1")
@@ -108,13 +116,13 @@ class LabelColumnTests(AppTest):
         self.pick("Factorio")
         page = self.tab("Mouse")
         self.assertEqual([page.tree.headerItem().text(i) for i in range(3)], ["Trigger", "Action", "Note"])
-        row = self.select_row(page, "forward")
+        row = self.select_row(page, "Forward")
         row.setText(2, "Opens the inventory")
         APP.processEvents()
         self.assertEqual(self.disk().labels, {"factorio_forward": "Opens the inventory"})
         self.assertFalse(self.w.dirty)
         self.pick("Factorio")
-        self.assertEqual(next(r for r in self.tab("Mouse").rows() if r.text(0) == "forward").text(2),
+        self.assertEqual(next(r for r in self.tab("Mouse").rows() if r.text(0) == "Forward").text(2),
                          "Opens the inventory")
 
 
@@ -153,7 +161,7 @@ class CopyPasteTests(AppTest):
     def test_copy_binding_to_another_app(self):
         self.pick("Factorio")
         page = self.tab("Mouse")
-        self.w._copy_binding(self.select_row(page, "forward"))
+        self.w._copy_binding(self.select_row(page, "Forward"))
         self.pick("Firefox")
         self.w._paste_here()
         self.assertTrue(any(b.button == "forward" for b in self.w.config.bindings_for("app", "firefox")))
@@ -303,7 +311,7 @@ class GitIntegrationTests(AppTest):
         self.w.save()                                          # save
         log = subprocess.run(["git", "log", "--format=%s"], cwd=self.dir, capture_output=True,
                              text=True).stdout.splitlines()
-        self.assertEqual(log[0], "Actuator: Factorio: ~ forward: E → Q")
+        self.assertEqual(log[0], "Actuator: Factorio: ~ Forward: E → Q")
         self.assertIn("Folders", log[1])
         self.assertIn("Committed", self.w.git_status.text())
 

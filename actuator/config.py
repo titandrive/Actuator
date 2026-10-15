@@ -248,7 +248,10 @@ def loads(text: str, path: Path | None = None) -> Config:
     config = Config(path=path, data=YAML(typ="rt").load(text) or {})
     for line in text.splitlines():
         if m := BUTTON_LINE.match(line):
-            config.button_names[m.group(1)] = m.group(2)
+            from .describe import button_label
+            # "back = back" or "back = Back" just record the button; only a different name was chosen.
+            if m.group(2) not in (m.group(1), button_label(m.group(1))):
+                config.button_names[m.group(1)] = m.group(2)
         elif m := APP_LINE.match(line):
             config.extra_apps.add(m.group(1))
         elif m := DEVICE_LINE.match(line):

@@ -46,7 +46,7 @@ class GitTests(TempConfig):
         readme = self.dir / "README.md"
         readme.write_text(gitsync.readme(cfg.load(self.path)))
         msg = gitsync.message(old, self.path.read_text())
-        self.assertTrue(msg.startswith("Actuator: Factorio: ~ forward: E → Q"))
+        self.assertTrue(msg.startswith("Actuator: Factorio: ~ Forward: E → Q"))
         ok, out = gitsync.commit(self.path, msg, [readme])
         self.assertTrue(ok, out)
         files = git("show", "--name-only", "--format=", "HEAD", cwd=self.dir).stdout.split()
@@ -62,7 +62,7 @@ class GitTests(TempConfig):
         self.assertIn("| Only if |", text)                 # firefox close has a condition
         self.assertIn("| Trigger | Action |", text)
         self.assertIn("window is fullscreen", text)
-        self.assertIn("| back | Hold F |", text)          # hold bindings read simply
+        self.assertIn("| Back | Hold F |", text)          # hold bindings read simply
         self.assertIn("on begin: Hold Alt, Tab", text)     # multi-step spelled out
         self.assertNotIn("hover", text.lower())            # pointer tab is hidden
         self.assertIn("## Device settings", text)
