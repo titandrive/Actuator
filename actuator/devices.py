@@ -17,7 +17,7 @@ from ruamel.yaml import YAML
 from . import icons
 from . import config as cfg
 from . import describe as d
-from .widgets import Toggle, ToggleRow
+from .widgets import Toggle
 
 TYPES = {  # key → (label, icon)
     "mouse": ("Mouse", "input-mouse"),
@@ -639,33 +639,3 @@ class DeviceSettingsDialog(QDialog):
     def apply_to(self, config: cfg.Config):
         config.data["device_rules"] = d.plain(rules(self.copy))
         config.device_types = dict(self.copy.device_types)
-
-
-def confirm_open(parent, settings) -> bool:
-    if settings.value("skip_device_warning", False, type=bool):
-        return True
-    dialog = QDialog(parent)
-    dialog.setWindowTitle("Device settings")
-    icon = QLabel()
-    icon.setPixmap(icons.lucide("triangle-alert", "#c58a00").pixmap(32, 32))
-    text = QLabel("These change how InputActions reads your mouse, touchpad and touchscreen: swipe "
-                  "angles, thresholds and timeouts.\n\nWrong values can make gestures hard to trigger "
-                  "or fire by accident. Saved changes can be undone from ☰ → Restore.")
-    text.setWordWrap(True)
-    skip = ToggleRow("Don't show this again")
-    buttons = QDialogButtonBox(QDialogButtonBox.StandardButton.Open | QDialogButtonBox.StandardButton.Cancel)
-    buttons.accepted.connect(dialog.accept)
-    buttons.rejected.connect(dialog.reject)
-    top = QHBoxLayout()
-    top.addWidget(icon, 0, Qt.AlignmentFlag.AlignTop)
-    top.addWidget(text, 1)
-    layout = QVBoxLayout(dialog)
-    layout.addLayout(top)
-    layout.addWidget(skip)
-    layout.addWidget(buttons)
-    dialog.resize(440, 0)
-    if not dialog.exec():
-        return False
-    if skip.isChecked():
-        settings.setValue("skip_device_warning", True)
-    return True

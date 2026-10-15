@@ -300,7 +300,6 @@ class OptionsAndDevicesTests(AppTest):
         devices.connected_devices = lambda: []
         devices.DeviceSettingsDialog.exec = lambda self: (devices.set_value(
             self.copy, ("type", "mouse"), "motion_threshold", 25), setattr(self, "dirty", True), 1)[2]
-        self.w.settings.setValue("skip_device_warning", True)
         self.w.open_device_settings()
         rules = self.disk().data["device_rules"]
         self.assertIn({"conditions": "$mouse", "motion_threshold": 25}, [dict(r) for r in rules])

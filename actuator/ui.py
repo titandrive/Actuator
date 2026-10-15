@@ -383,11 +383,11 @@ class SidebarTree(QTreeWidget):
 
 
 DEV_FEATURES = [  # (settings key, label, tooltip) — all off by default
-    ("device_settings", "Enable Device Settings", "Swipe angles, thresholds and timeouts for your devices."),
-    ("yaml_editor", "Enable Full YAML Editor", "Adds a YAML button to the toolbar to edit config.yaml directly."),
+    ("yaml_editor", "Enable YAML Editor", "Adds a YAML button to the toolbar to edit config.yaml directly."),
     ("only_if", "Enable Only If Conditions", "Shows the condition builder in the binding editor."),
-    ("git_autocommit", "Enable Git Auto-Commit",
-     "Commits config.yaml to its git repository every time Actuator changes it. See the README for setup."),
+    ("git_autocommit", "Git Auto-Commit",
+     "Commits config.yaml to its git repository every time Actuator changes it. "
+     f"See the <a href='{REPO_URL}#git-auto-commit-developer-mode'>README</a> for setup."),
 ]
 
 
@@ -443,6 +443,7 @@ class Card(QFrame):
             sub = QLabel(subtitle)
             sub.setWordWrap(True)
             sub.setStyleSheet("color: palette(placeholder-text); font-size: 9pt;")
+            sub.setOpenExternalLinks(True)  # some subtitles link to the docs
             text.addWidget(sub)
         h.addLayout(text, 1)
         if extra:
@@ -514,14 +515,13 @@ class OptionsDialog(QDialog):
         off.setToolTip("Turn off developer mode")
         off.clicked.connect(lambda: self._set_dev_mode(False))
         self.features = {}
-        devices = QPushButton("Open…")
+        devices = QPushButton("Open")
         devices.clicked.connect(parent.open_device_settings)
+        dev.add_row("Device Settings", "Swipe angles, thresholds and timeouts for your devices.", devices)
         for key, label, note in DEV_FEATURES:
             t = Toggle(self.settings.value(f"dev/{key}", False, type=bool))
             self.features[key] = t
-            dev.add_row(label.removeprefix("Enable "), note, t, devices if key == "device_settings" else None)
-        devices.setVisible(self.features["device_settings"].isChecked())
-        self.features["device_settings"].toggled.connect(devices.setVisible)
+            dev.add_row(label, note, t)
 
         # Git details, under its switch
         self.git_box = QWidget()
@@ -1187,8 +1187,6 @@ class MainWindow(QMainWindow):
         self._after_write(previous, old)
 
     def open_device_settings(self):
-        if not devices_mod.confirm_open(self, self.settings):
-            return
         dialog = devices_mod.DeviceSettingsDialog(self, self.config)
         if dialog.exec() == QDialog.DialogCode.Accepted and dialog.dirty:
             self.apply_now(dialog.apply_to, take_snapshot=True)
