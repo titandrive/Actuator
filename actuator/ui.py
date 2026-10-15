@@ -39,7 +39,10 @@ from . import writer
 from . import yaml_editor
 from .widgets import CARD_STYLE, Toggle
 from . import devices as devices_mod
-from .editor import GESTURE_TYPES, BindingEditor, new_button_binding, new_gesture_binding, record_stroke
+from .editor import (
+    GESTURE_TYPES, BindingEditor, new_button_binding, new_gesture_binding, new_shortcut_binding,
+    record_stroke,
+)
 
 ROLE = Qt.ItemDataRole.UserRole
 
@@ -1387,6 +1390,11 @@ class MainWindow(QMainWindow):
     def save(self):
         if self._blocked():
             return
+        if any(b.type == "shortcut" and not b.button and not b.data.get("shortcut") for b in self.config.bindings):
+            # InputActions rejects a shortcut with no keys, and with it the whole config.
+            QMessageBox.warning(self, "Actuator", "A new shortcut has no keys yet. Record its keys in the "
+                                "Trigger card, or delete it, then save.")
+            return
         if not self._confirm_first_write():
             return
         old = self._disk_text()
@@ -2063,6 +2071,12 @@ class MainWindow(QMainWindow):
         self.config.add_binding(section, data)
         self._refresh(lambda p: p.get("binding") is not None and p["binding"].data is data)
 
+    def _add_shortcut(self, scope, app):
+        """Like adding a gesture: a new row, set up in the editor (its keys in the Trigger card)."""
+        data = new_shortcut_binding(self.config, "", scope, app)
+        self.config.add_binding("keyboard", data)
+        self._refresh(lambda p: p.get("binding") is not None and p["binding"].data is data)
+
     def add_button(self, scope, app):
         """Learn a new button by pressing it, then bind it here."""
         bound_here = {x.button for x in self._bindings(scope, app)}
@@ -2105,7 +2119,14 @@ class MainWindow(QMainWindow):
             title = d.gesture_title(b.data)
             page.add_row([title, d.summary(b), self.config.labels.get(b.id, "")],
                          {"title": f"{title} in {where}", "binding": b})
-        page.add_button(self._gesture_menu_button(section, scope, app))
-        page.finish(f"No {section} bindings for {where} yet.", select)
+        if section == "keyboard":
+            add = QPushButton(icons.icon("list-add"), "Add shortcut")
+            add.clicked.connect(lambda: self._add_shortcut(scope, app))
+            page.add_button(add)
+            page.finish(f"No keyboard shortcuts for {where} yet. Use Add shortcut to make a key combo "
+                        "do something else.\nMouse buttons that send key combos are on the Mouse tab.", select)
+        else:
+            page.add_button(self._gesture_menu_button(section, scope, app))
+            page.finish(f"No {section} bindings for {where} yet.", select)
         self._wire(page, lambda p: [d.gesture_title(p["binding"].data), d.summary(p["binding"])])
         return page

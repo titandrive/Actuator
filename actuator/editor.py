@@ -473,6 +473,24 @@ class StrokeRecorder(QDialog):
         super().reject()
 
 
+def shortcut_clash(config: cfg.Config, combo: str) -> str | None:
+    """Why this combo can't be a keyboard shortcut here, or None. A combo one of the mouse's
+    buttons sends belongs to that button, on the Mouse tab."""
+    button = next((b for b in config.buttons if b.src == combo), None)
+    if button:
+        name = config.button_names.get(combo)
+        who = f"Your {name} mouse button sends" if name else "One of your mouse buttons sends"
+        return f"{who} {d.combo(combo)}. Bind it on the Mouse tab instead."
+    return None
+
+
+def new_shortcut_binding(config: cfg.Config, combo: str, scope: str, app: str | None) -> dict:
+    data = new_gesture_binding(config, "keyboard", "shortcut", scope, app)
+    data["id"] = unique_id(config, f"{slug(app or 'global')}_{slug(combo or 'shortcut')}")
+    data["shortcut"] = combo.split("+") if combo else []  # empty until its keys are recorded
+    return data
+
+
 def record_stroke(parent) -> str | None:
     dialog = StrokeRecorder(parent)
     return dialog.stroke if dialog.exec() else None
@@ -683,6 +701,24 @@ class BindingEditor(QWidget):
         record.clicked.connect(self._record_stroke)
         clear = QPushButton("Clear")
         clear.clicked.connect(self._clear_strokes)
+        self.keys_field = KeyField()
+        self.keys_field.single = True
+        self.keys_field.setMinimumWidth(200)
+        self.keys_field.setMaximumWidth(260)
+        self.keys_field.recorded.connect(self._keys_recorded)
+        self.keys_field.editingFinished.connect(self._keys_edited)
+        self.keys_record = QPushButton(icons.icon("media-record"), "Record")
+        self.keys_record.setCheckable(True)
+        self.keys_record.setFocusPolicy(Qt.FocusPolicy.NoFocus)
+        self.keys_record.toggled.connect(self._keys_record_toggled)
+        self.keys_row = QWidget()
+        kr = QHBoxLayout(self.keys_row)
+        kr.setContentsMargins(0, 0, 0, 0)
+        kr.addWidget(self.keys_field)
+        kr.addWidget(self.keys_record)
+        kr.addStretch(1)
+        self.keys_error = QLabel()
+        self.keys_error.setStyleSheet("color: #d24545;")
         self.strokes_row = QWidget()
         sr = QHBoxLayout(self.strokes_row)
         sr.setContentsMargins(0, 0, 0, 0)
@@ -718,6 +754,8 @@ class BindingEditor(QWidget):
         self.block.setToolTip("When on, only your action runs. When off, the app also gets the original "
                               "button press or gesture.")
         self.when_form.addRow("Type", trigger_row)
+        self.when_form.addRow("Keys", self.keys_row)
+        self.when_form.addRow("", self.keys_error)
         self.when_form.addRow("Strokes", self.strokes_row)
         self.when_form.addRow("Hold", self.hold_row)
         self.when_form.addRow("", self.hold_hint)
@@ -731,7 +769,7 @@ class BindingEditor(QWidget):
         self.when_form.addRow("", self.instant)
         self.when_form.addRow("", self.block)
         # One label column for every card, sized to the longest label in the user's font.
-        self._label_w = label_width(self, ["Type", "Strokes", "Hold", "Fingers", "Direction", "Speed", "Threshold", "When", "Value"])
+        self._label_w = label_width(self, ["Type", "Keys", "Strokes", "Hold", "Fingers", "Direction", "Speed", "Threshold", "When", "Value"])
         tidy_form(self.when_form, width=self._label_w)
         self.fingers.valueChanged.connect(self._trigger_edited)
         self.direction.currentTextChanged.connect(self._trigger_edited)
@@ -892,9 +930,18 @@ class BindingEditor(QWidget):
             raw = d.button_label(b.button)
             name = self.config.button_names.get(b.button) or raw
             self.trigger_label.setText(f"Mouse button · {name}" + (f"  (sends {raw})" if name != raw else ""))
+        elif t == "shortcut":
+            self.trigger_label.setText("Keyboard shortcut")
         else:
             self.trigger_label.setText(" · ".join(d.trigger_parts({"type": t, **{
                 k: g[k] for k in ("mouse_buttons", "shortcut") if k in g}})))
+        is_shortcut = t == "shortcut" and not b.button
+        self.when_form.setRowVisible(self.keys_row, is_shortcut)
+        self.when_form.setRowVisible(self.keys_error, False)
+        self.keys_record.setChecked(False)
+        if is_shortcut:
+            self.keys_field.setText(d.shortcut(g.get("shortcut") or []))
+            self._show_keys_problem(None if g.get("shortcut") else "No keys yet. Click Record and press the combo.")
         self.when_form.setRowVisible(self.strokes_row, t == "stroke")
         n = len(g.get("strokes") or []) if isinstance(g.get("strokes"), list) else (1 if g.get("strokes") else 0)
         self.strokes_label.setText(f"{n} recorded" if n else "None yet. Record one, or this gesture won't work.")
@@ -1053,6 +1100,50 @@ class BindingEditor(QWidget):
         self.show_binding(self.title.text(), self.binding)  # rows for the new type
         if new == "stroke" and not g.get("strokes"):
             self._record_stroke()
+
+    def _keys_record_toggled(self, on: bool):
+        if on:
+            self._keys_pause = pause.ShortcutPause()
+            self._keys_pause.start()  # so the combo is recorded instead of running
+            self.keys_field.start()
+            self.keys_record.setText("Stop")
+            self._show_keys_problem(None)
+            self.keys_field.setPlaceholderText("Press the combo, like Ctrl+A")
+        else:
+            if getattr(self, "_keys_pause", None):
+                self._keys_pause.stop()
+                self._keys_pause = None
+            self.keys_field.stop()
+            self.keys_record.setText("Record")
+            self.keys_field.setPlaceholderText("")
+            if self.binding and self.binding.type == "shortcut" and not self.binding.data.get("shortcut"):
+                self._show_keys_problem("No keys yet. Click Record and press the combo.")
+
+    def _show_keys_problem(self, problem: str | None):
+        self.keys_error.setText(problem or "")
+        self.when_form.setRowVisible(self.keys_error, bool(problem))
+
+    def _keys_recorded(self):
+        self.keys_record.setChecked(False)  # one combo is all a shortcut has
+        self._keys_edited()
+
+    def _keys_edited(self):
+        if self._loading or not self.binding or self.binding.type != "shortcut" or self.binding.button:
+            return
+        if not self.keys_field.text().strip():
+            if not self.keys_record.isChecked():
+                self._show_keys_problem("No keys yet. Click Record and press the combo.")
+            return
+        try:
+            combo = keys.parse_combo(self.keys_field.text())
+            problem = shortcut_clash(self.config, combo)
+        except ValueError as e:
+            problem = str(e)
+        self._show_keys_problem(problem)
+        if problem or combo.split("+") == list(self.binding.data.get("shortcut") or []):
+            return
+        self.binding.data["shortcut"] = combo.split("+")
+        self._commit()
 
     def _record_stroke(self):
         if not self.binding:

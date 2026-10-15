@@ -4,12 +4,13 @@ conditions, restore, broken configs, recording, options, device settings and git
 import os
 import subprocess
 import unittest
+from unittest import mock
 
 from helpers import APP, AppTest
 
 from PySide6.QtCore import QPoint, Qt, QTimer
 from PySide6.QtTest import QTest
-from PySide6.QtWidgets import QDialog, QInputDialog, QLineEdit
+from PySide6.QtWidgets import QDialog, QInputDialog, QLineEdit, QMessageBox
 
 from actuator import config as cfg, devices, iconpicker, versions, writer, yaml_editor
 
@@ -92,6 +93,27 @@ class EditingTests(AppTest):
         ed._delete()
         APP.processEvents()
         self.assertFalse(any(b.type == "pinch" for b in self.w.config.bindings_for("app", "firefox")))
+
+    def test_add_keyboard_shortcut_like_a_gesture(self):
+        self.pick("Firefox")
+        self.w._add_shortcut("app", "firefox")
+        page = self.tab("Keyboard")
+        ed = page.editor
+        self.assertEqual(page.tree.currentItem().text(0), "New shortcut")
+        self.assertIn("No keys yet", ed.keys_error.text())
+        warned = []
+        with mock.patch.object(QMessageBox, "warning", staticmethod(lambda *a, **k: warned.append(a[2]))):
+            self.w.save()
+        self.assertTrue(warned)                      # no keys: nothing written
+        self.assertFalse(any(b.type == "shortcut" and not b.button for b in self.disk().bindings))
+        ed.keys_field.setText("Ctrl+A")
+        ed._keys_edited()
+        self.assertEqual(ed.binding.data["shortcut"], ["leftctrl", "a"])
+        self.assertEqual(page.tree.currentItem().text(0), "Ctrl+A")
+        ed.keys_field.setText("Meta+W")              # what the mouse's side button sends
+        ed._keys_edited()
+        self.assertEqual(ed.binding.data["shortcut"], ["leftctrl", "a"])
+        self.assertIn("Mouse tab", ed.keys_error.text())
 
     def test_reset_button_name(self):
         self.w.apply_now(lambda c: c.rename_button("forward", "Side 1"))

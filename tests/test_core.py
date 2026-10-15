@@ -164,6 +164,21 @@ class StrokeTests(unittest.TestCase):
         self.assertEqual(editor.detect_mode(editor.end_only_actions(hold)), ("Press keys", {"on": "end", "keys": "F"}))
 
 
+class ShortcutTests(TempConfig):
+    def test_new_shortcut_and_clash_with_mouse_buttons(self):
+        c = cfg.load(self.path)
+        data = editor.new_shortcut_binding(c, "leftctrl+a", "app", "firefox")
+        self.assertEqual(data["shortcut"], ["leftctrl", "a"])
+        self.assertEqual(data["id"], "firefox_leftctrl_a")
+        self.assertEqual(data["conditions"], ["$window_class == firefox"])
+        c.add_binding("keyboard", data)
+        b = next(x for x in c.bindings if x.id == "firefox_leftctrl_a")
+        self.assertIsNone(b.button)  # a keyboard shortcut, not a mouse button
+        self.assertIsNone(editor.shortcut_clash(c, "leftctrl+a"))
+        c.add_button("leftmeta+w", "Side Button")
+        self.assertIn("Side Button", editor.shortcut_clash(c, "leftmeta+w"))
+
+
 class StrokeParseTests(unittest.TestCase):
     def test_short_and_long_strokes(self):
         self.assertEqual(editor.parse_stroke("ZDIAnQAxZAA=\n"), "ZDIAnQAxZAA=")  # a straight line

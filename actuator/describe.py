@@ -148,7 +148,7 @@ def gesture_title(g: dict) -> str:
     fingers = f"{g['fingers']}-finger " if "fingers" in g else ""
     direction = f" {str(g['direction']).replace('_', '/')}" if "direction" in g else ""
     if t == "shortcut":
-        return shortcut(g.get("shortcut") or [])
+        return shortcut(g.get("shortcut") or []) or "New shortcut"
     speed = f"{g['speed']} " if g.get("speed") in ("fast", "slow") else ""
     return f"{speed}{fingers}{t}{direction}".capitalize()
 
