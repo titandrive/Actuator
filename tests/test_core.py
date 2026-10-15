@@ -169,6 +169,7 @@ class StrokeParseTests(unittest.TestCase):
         self.assertEqual(editor.parse_stroke("ZDIAnQAxZAA=\n"), "ZDIAnQAxZAA=")  # a straight line
         long = "PgwAAE8LBRldGgwpZDEUN19LHUhTWSNgMl0uphJTObUERj/JAChJ2gUaT/AaDVf7QAZkAA=="
         self.assertEqual(editor.parse_stroke(long), long)
+        self.assertEqual(editor.parse_stroke(f"'{long}'\n"), long)  # newer versions quote it
         self.assertIsNone(editor.parse_stroke("Stroke recording requires a valid configuration to be active."))
         self.assertIsNone(editor.parse_stroke(""))
 

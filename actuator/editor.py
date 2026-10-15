@@ -377,12 +377,14 @@ def load_yaml(text: str):
     return YAML(typ="safe").load(text)
 
 
-# record-stroke prints the stroke alone on a line, as base64. A straight line is only ~12 characters.
+# record-stroke prints the stroke alone on a line, as base64 (maybe quoted). A straight line is only ~12 characters.
 STROKE_LINE = re.compile(r"^[A-Za-z0-9+/]{4,}={0,2}$")
 
 
 def parse_stroke(output: str) -> str | None:
-    lines = [line.strip() for line in output.splitlines() if STROKE_LINE.match(line.strip())]
+    # Newer versions print it quoted, as in YAML: 'PycA…'.
+    lines = [line.strip().strip("'\"") for line in output.splitlines()]
+    lines = [line for line in lines if STROKE_LINE.match(line)]
     return lines[-1] if lines else None
 
 
