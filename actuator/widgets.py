@@ -2,7 +2,9 @@
 
 from PySide6.QtCore import Property, QPropertyAnimation, QRectF, QSize, Qt, Signal
 from PySide6.QtGui import QColor, QPainter
-from PySide6.QtWidgets import QAbstractButton, QFormLayout, QFrame, QHBoxLayout, QLabel, QVBoxLayout, QWidget
+from PySide6.QtWidgets import (
+    QAbstractButton, QFormLayout, QFrame, QHBoxLayout, QLabel, QSizePolicy, QVBoxLayout, QWidget,
+)
 
 
 class Toggle(QAbstractButton):
@@ -98,6 +100,30 @@ class ToggleRow(QWidget):
 CARD_STYLE = ("QFrame#card { background: rgba(127, 127, 127, 0.07); "
               "border: 1px solid rgba(127, 127, 127, 0.20); border-radius: 8px; }")
 LABEL_WIDTH = 86  # one label column, shared by every editor card so rows line up across them
+
+
+class WrapLabel(QLabel):
+    """A label that wraps to its width and always gets the height that takes. Plain wrapped labels
+    in forms and cards often get their last line cut off, and unwrapped ones push the page wider
+    than the window; this keeps its minimum height in step with its width instead."""
+
+    def __init__(self, text: str = "", parent=None):
+        super().__init__(text, parent)
+        self.setWordWrap(True)
+        self.setSizePolicy(QSizePolicy.Policy.Preferred, QSizePolicy.Policy.Minimum)
+
+    def resizeEvent(self, event):
+        super().resizeEvent(event)
+        self._fit()
+
+    def setText(self, text: str):
+        super().setText(text)
+        self._fit()
+
+    def _fit(self):
+        height = self.heightForWidth(self.width()) if self.width() > 0 else -1
+        if height > 0 and height != self.minimumHeight():
+            self.setMinimumHeight(height)
 
 
 class Section(QWidget):

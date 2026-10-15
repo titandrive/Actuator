@@ -2072,7 +2072,7 @@ class MainWindow(QMainWindow):
         add.clicked.connect(lambda: self.add_button(scope, app))
         page.add_button(add)
         page.add_button(self._gesture_menu_button("mouse", scope, app))
-        page.finish(f"No mouse bindings for {where} yet. Use Add button binding.", select)
+        page.finish(f"No mouse bindings for {where} are set yet. Use Add button binding to set one.", select)
         page.tree.setEditTriggers(QTreeWidget.EditTrigger.NoEditTriggers)
         page.tree.itemDoubleClicked.connect(
             lambda item, col: page.tree.editItem(item, 0) if item.flags() & Qt.ItemFlag.ItemIsEditable else None)
@@ -2157,10 +2157,9 @@ class MainWindow(QMainWindow):
             add = QPushButton(icons.icon("list-add"), "Add shortcut")
             add.clicked.connect(lambda: self._add_shortcut(scope, app))
             page.add_button(add)
-            page.finish(f"No keyboard shortcuts for {where} yet. Use Add shortcut to make a key combo "
-                        "do something else.\nMouse buttons that send key combos are on the Mouse tab.", select)
+            page.finish(f"No keyboard bindings for {where} are set yet. Use Add shortcut to set one.", select)
         else:
             page.add_button(self._gesture_menu_button(section, scope, app))
-            page.finish(f"No {section} bindings for {where} yet.", select)
+            page.finish(f"No {section} bindings for {where} are set yet. Use Add gesture to set one.", select)
         self._wire(page, lambda p: [d.gesture_title(p["binding"].data), d.summary(p["binding"])])
         return page

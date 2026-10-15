@@ -20,7 +20,7 @@ from . import describe as d
 from . import devices
 from . import keys
 from . import pause
-from .widgets import Section, ToggleRow, label_width, tidy_form
+from .widgets import Section, ToggleRow, WrapLabel, label_width, tidy_form
 
 # Trigger types each device section supports.
 GESTURE_TYPES = {
@@ -686,7 +686,7 @@ class BindingEditor(QWidget):
         self._loading = False
         self.show_conditions = True  # the Only if builder (a developer option in the app)
 
-        self.title = QLabel()
+        self.title = WrapLabel()
         self.title.setStyleSheet("font-weight: 600; font-size: 11pt;")
         self.yaml_button = QPushButton(icons.icon("text-x-script"), "YAML")
         self.yaml_button.setCheckable(True)
@@ -735,7 +735,7 @@ class BindingEditor(QWidget):
         kr.addWidget(self.keys_field)
         kr.addWidget(self.keys_record)
         kr.addStretch(1)
-        self.keys_error = QLabel()
+        self.keys_error = WrapLabel()
         self.keys_error.setStyleSheet("color: #d24545;")
         self.strokes_row = QWidget()
         sr = QHBoxLayout(self.strokes_row)
@@ -745,14 +745,12 @@ class BindingEditor(QWidget):
         sr.addWidget(clear)
         sr.addStretch(1)
         self.fingers = QSpinBox(minimum=1, maximum=5)
-        self.finger_warning = QLabel()
-        self.finger_warning.setWordWrap(False)
+        self.finger_warning = WrapLabel()
         self.finger_warning.setStyleSheet("color: palette(placeholder-text);")
         self.fingers_row = self.fingers
         self.hold_button = QComboBox()
         self.hold_button.currentIndexChanged.connect(self._hold_button_edited)
-        self.hold_hint = QLabel("Hold it while you move the mouse. A plain click still works as usual.")
-        self.hold_hint.setWordWrap(False)
+        self.hold_hint = WrapLabel("Hold it while you move the mouse. A plain click still works as usual.")
         self.hold_hint.setStyleSheet("color: palette(placeholder-text);")
         self.hold_row = self.hold_button
         self.direction = QComboBox()
@@ -763,8 +761,7 @@ class BindingEditor(QWidget):
         self.threshold = QDoubleSpinBox(minimum=0, maximum=100000, decimals=2)
         self.threshold.setSpecialValueText("Off")  # 0: no threshold
         self.threshold.setMinimumWidth(110)
-        self.threshold_hint = QLabel()
-        self.threshold_hint.setWordWrap(False)
+        self.threshold_hint = WrapLabel()
         self.threshold_hint.setStyleSheet("color: palette(placeholder-text);")
         self.lock_pointer = ToggleRow("Keep the pointer still while drawing")
         self.instant = ToggleRow("Fire as soon as the button goes down")
@@ -841,8 +838,7 @@ class BindingEditor(QWidget):
         # Errors only show once the field is left, not on every half-typed key.
         self.value.textEdited.connect(lambda _t: self._do_edited(quiet=True))
         self.value.editingFinished.connect(self._do_edited)
-        self.value_hint = QLabel()
-        self.value_hint.setWordWrap(False)  # one line: a wrapped hint got cut off by the card's sizing
+        self.value_hint = WrapLabel()
         self.value_hint.setStyleSheet("color: palette(placeholder-text);")
         self.error = QLabel()
         self.error.setStyleSheet("color: #d24545;")
@@ -963,7 +959,7 @@ class BindingEditor(QWidget):
             self._show_keys_problem(shortcut_clash(self.config, combo) if combo else None)
         self.when_form.setRowVisible(self.strokes_row, t == "stroke")
         n = len(g.get("strokes") or []) if isinstance(g.get("strokes"), list) else (1 if g.get("strokes") else 0)
-        self.strokes_label.setText(f"{n} recorded" if n else "None yet. Record one, or this gesture won't work.")
+        self.strokes_label.setText(f"{n} recorded" if n else "No strokes are recorded yet. Use Record stroke to record one.")
         has_fingers = "fingers" in g or (b.section in FINGER_SECTIONS and t in FINGER_TYPES)
         self.when_form.setRowVisible(self.fingers_row, has_fingers)
         if has_fingers:
@@ -1226,7 +1222,7 @@ class BindingEditor(QWidget):
         self.when_form.setRowVisible(self.finger_warning, one)
         if one:
             what = "moving the pointer" if b.section == "touchpad" else "touching and scrolling"
-            self.finger_warning.setText(f"One finger is also how you're {what}, so this gesture\n"
+            self.finger_warning.setText(f"One finger is also how you're {what}, so this gesture "
                                         f"takes that over wherever it applies. Use three fingers instead.")
 
     def _trigger_edited(self, *_):
