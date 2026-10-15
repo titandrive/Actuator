@@ -116,6 +116,7 @@ def kwin_pid() -> str:
 
 
 INSTALL_URL = "https://wiki.inputactions.org/main/getting-started/installation/index.html"
+DOCS_URL = "https://wiki.inputactions.org/"
 
 
 def active_window_class() -> str | None:
@@ -1047,6 +1048,9 @@ class MainWindow(QMainWindow):
         menu.addSeparator()
         menu.addAction(icons.icon("document-export"), "Export YAML", self.export_yaml)
         menu.addAction(icons.icon("document-revert"), "Restore", self.open_versions)
+        menu.addSeparator()
+        menu.addAction(icons.lucide("book-open"), "InputActions Wiki",
+                       lambda: QDesktopServices.openUrl(QUrl(DOCS_URL)))
         hamburger = QToolButton(icon=icons.icon("application-menu", icons.icon("open-menu-symbolic")))
         hamburger.setToolTip("Menu")
         # Open the menu by hand: attaching it to the button would reserve room for a dropdown
