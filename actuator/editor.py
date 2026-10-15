@@ -779,7 +779,7 @@ class BindingEditor(QWidget):
         self._label_w = label_width(self, ["Type", "Keys", "Strokes", "Hold", "Fingers", "Direction", "Speed", "Threshold", "When", "Value"])
         tidy_form(self.when_form, width=self._label_w)
         self.fingers.valueChanged.connect(self._trigger_edited)
-        self.direction.currentTextChanged.connect(self._trigger_edited)
+        self.direction.currentIndexChanged.connect(self._trigger_edited)
         self.speed.currentIndexChanged.connect(self._trigger_edited)
         self.threshold.valueChanged.connect(self._trigger_edited)
         self.lock_pointer.toggled.connect(self._trigger_edited)
@@ -966,11 +966,12 @@ class BindingEditor(QWidget):
         self.when_form.setRowVisible(self.direction, t in DIRECTIONS)
         self.direction.clear()
         if t in DIRECTIONS:
-            self.direction.addItems(DIRECTIONS[t])
+            for value in DIRECTIONS[t]:
+                self.direction.addItem(d.direction(value, t).capitalize(), value)
             current = str(g.get("direction", DIRECTIONS[t][0]))
             if current not in DIRECTIONS[t]:
-                self.direction.addItem(current)
-            self.direction.setCurrentText(current)
+                self.direction.addItem(d.direction(current, t).capitalize(), current)
+            self.direction.setCurrentIndex(self.direction.findData(current))
         show_speed = t in SPEED_TYPES or "speed" in g
         self.when_form.setRowVisible(self.speed, show_speed)
         if show_speed:
@@ -1225,8 +1226,8 @@ class BindingEditor(QWidget):
         self._update_finger_warning()
         if self.when_form.isRowVisible(self.fingers_row):
             g["fingers"] = self.fingers.value()
-        if self.when_form.isRowVisible(self.direction) and self.direction.currentText():
-            g["direction"] = self.direction.currentText()
+        if self.when_form.isRowVisible(self.direction) and self.direction.currentData():
+            g["direction"] = self.direction.currentData()
         if self.when_form.isRowVisible(self.speed):
             if self.speed.currentData():
                 g["speed"] = self.speed.currentData()

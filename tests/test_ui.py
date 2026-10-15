@@ -154,7 +154,7 @@ class ConditionTests(AppTest):
         self.w.settings.setValue("dev/only_if", True)
         self.pick("Firefox")
         page = self.tab("Touchpad")
-        self.select_row(page, "3-finger swipe up")
+        self.select_row(page, "3-finger swipe bottom to top")
         cb = page.editor.conditions
         self.assertTrue(page.editor.cond_box.isVisibleTo(page))
         cb._add()                                            # Window is fullscreen
@@ -169,13 +169,13 @@ class ConditionTests(AppTest):
                                                 {"any": ["$window_fullscreen", "$keyboard_modifiers contains ctrl"]}])
         self.assertEqual((b.scope, b.app), ("app", "firefox"))   # still listed under Firefox
         self.pick("Firefox")
-        row = next(r for r in self.tab("Touchpad").rows() if r.text(0) == "3-finger swipe up")
+        row = next(r for r in self.tab("Touchpad").rows() if r.text(0) == "3-finger swipe bottom to top")
         self.assertIn("(only if +2)", row.text(1))
 
     def test_hidden_when_option_off(self):
         self.pick("Firefox")
         page = self.tab("Touchpad")
-        self.select_row(page, "3-finger swipe up")
+        self.select_row(page, "3-finger swipe bottom to top")
         self.assertFalse(page.editor.cond_box.isVisibleTo(page))
 
 

@@ -24,6 +24,24 @@ KEY_NAMES = {
     "notification_center": "Notifications", "pickup_phone": "PickUp", "hangup_phone": "HangUp",
 }
 
+# InputActions' directions in words. A swipe is named by its motion ("right" is left to right);
+# "left_right" fires for either direction, not left-then-right.
+DIRECTIONS = {
+    "left_right": "left or right", "up_down": "up or down", "any": "any direction",
+}
+SWIPE_DIRECTIONS = {
+    "right": "left to right", "left": "right to left", "up": "bottom to top", "down": "top to bottom",
+    "left_right": "either direction (left/right)", "up_down": "either direction (up/down)",
+}
+
+
+def direction(value, trigger_type: str = "") -> str:
+    value = str(value)
+    if trigger_type == "swipe" and value in SWIPE_DIRECTIONS:
+        return SWIPE_DIRECTIONS[value]
+    return DIRECTIONS.get(value, value.replace("_", " "))
+
+
 STAGES = {
     "begin": "On begin",
     "update": "On update",
@@ -135,7 +153,7 @@ def trigger_parts(g: dict) -> list[str]:
     if "fingers" in g:
         parts.append(f"{g['fingers']} fingers")
     if "direction" in g:
-        parts.append(str(g["direction"]).replace("_", "/"))
+        parts.append(direction(g["direction"], str(g.get("type", ""))))
     if "mouse_buttons" in g:
         parts.append(" + ".join(str(b) for b in g["mouse_buttons"]))
     if "shortcut" in g:
@@ -154,11 +172,11 @@ def trigger_parts(g: dict) -> list[str]:
 def gesture_title(g: dict) -> str:
     t = str(g.get("type", "?"))
     fingers = f"{g['fingers']}-finger " if "fingers" in g else ""
-    direction = f" {str(g['direction']).replace('_', '/')}" if "direction" in g else ""
+    where = f" {direction(g['direction'], t)}" if "direction" in g else ""
     if t == "shortcut":
         return shortcut(g.get("shortcut") or []) or "New shortcut"
     speed = f"{g['speed']} " if g.get("speed") in ("fast", "slow") else ""
-    return f"{speed}{fingers}{t}{direction}".capitalize()
+    return f"{speed}{fingers}{t}{where}".capitalize()
 
 
 def condition(c) -> str:

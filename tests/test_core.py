@@ -210,9 +210,17 @@ class FingerTests(TempConfig):
         self.assertEqual(editor.finger_range("touchpad", "pinch"), (2, 4))
         self.assertEqual(editor.finger_range("touchscreen", "swipe"), (1, 5))
 
+    def test_directions_in_words(self):
+        self.assertEqual(d.gesture_title({"type": "swipe", "fingers": 3, "direction": "left_right"}),
+                         "3-finger swipe either direction (left/right)")
+        self.assertEqual(d.gesture_title({"type": "swipe", "direction": "right"}), "Swipe left to right")
+        self.assertEqual(d.gesture_title({"type": "wheel", "direction": "up"}), "Wheel up")
+        self.assertEqual(d.direction("up_down"), "up or down")
+        self.assertEqual(d.direction("any"), "any direction")
+
     def test_speed_shows_in_the_title(self):
         self.assertEqual(d.gesture_title({"type": "swipe", "fingers": 3, "direction": "left", "speed": "fast"}),
-                         "Fast 3-finger swipe left")
+                         "Fast 3-finger swipe right to left")
         self.assertEqual(d.gesture_title({"type": "circle", "direction": "clockwise"}), "Circle clockwise")
 
 
@@ -285,7 +293,7 @@ class DiffTests(TempConfig):
         other.folders["Games"] = ["factorio"]
         g = diffing.changes(cur, other)
         self.assertIn(("~", "Forward", "E", "Q"), g["Factorio"])
-        self.assertIn(("−", "3-finger swipe up", "Ctrl+PgUp", "removed"), g["Firefox"])
+        self.assertIn(("−", "3-finger swipe bottom to top", "Ctrl+PgUp", "removed"), g["Firefox"])
         self.assertTrue(any(m == "~" and "4 fingers" in a for m, _w, _b, a in g["Global"]))  # paired, not -/+
         self.assertIn(("~", "Touchpad: swipe angle tolerance", "45", "30"), g["Device settings"])
         self.assertTrue(any(w == "Folders" for _m, w, _b, _a in g["Other"]))
