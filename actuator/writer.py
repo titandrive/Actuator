@@ -165,17 +165,21 @@ def original_path(path: Path) -> Path:
     return path.with_name(path.name + ".original")
 
 
-def snapshot(path: Path) -> Path | None:
+def snapshot(path: Path, manual: bool = False, lock: bool = False) -> Path | None:
+    """Keep a copy of the config as a version. Manual backups (Backup Now) are named as such, and
+    locked if asked, so pruning never takes them."""
     if not path.exists():
         return None
     SNAPSHOT_DIR.mkdir(parents=True, exist_ok=True)
-    stamp = f"{datetime.now():%Y%m%d-%H%M%S}"
+    stamp = f"{datetime.now():%Y%m%d-%H%M%S}" + ("-backup" if manual else "")
     target = SNAPSHOT_DIR / f"config-{stamp}.yaml"
     n = 2
     while target.exists():  # two in one second must not overwrite each other
         target = SNAPSHOT_DIR / f"config-{stamp}-{n}.yaml"
         n += 1
     shutil.copy2(path, target)
+    if lock:
+        set_locked(target, True)
     prune()
     return target
 
@@ -222,6 +226,34 @@ def set_locked(path: Path, on: bool) -> None:
         locks["snapshots"] = sorted(names)
     SNAPSHOT_DIR.mkdir(parents=True, exist_ok=True)
     _locks_file().write_text(json.dumps(locks, indent=2) + "\n")
+
+
+# Names people give versions in Restore, in another small file next to the snapshots.
+def _names_file() -> Path:
+    return SNAPSHOT_DIR / "names.json"
+
+
+def _names() -> dict:
+    try:
+        data = json.loads(_names_file().read_text())
+        return data if isinstance(data, dict) else {}
+    except (OSError, ValueError):
+        return {}
+
+
+def version_name(path: Path) -> str | None:
+    return _names().get(_lock_key(path))
+
+
+def set_version_name(path: Path, name: str | None) -> None:
+    """Name a version; an empty name goes back to the automatic one."""
+    names = _names()
+    if name and name.strip():
+        names[_lock_key(path)] = name.strip()
+    else:
+        names.pop(_lock_key(path), None)
+    SNAPSHOT_DIR.mkdir(parents=True, exist_ok=True)
+    _names_file().write_text(json.dumps(names, indent=2) + "\n")
 
 
 def snapshots() -> list[Path]:

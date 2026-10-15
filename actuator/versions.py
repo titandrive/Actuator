@@ -4,7 +4,7 @@ import html
 from datetime import datetime
 from pathlib import Path
 
-from PySide6.QtCore import Qt
+from PySide6.QtCore import Qt, QTimer
 from PySide6.QtGui import QColor, QIcon, QPalette
 from PySide6.QtWidgets import (
     QDialog, QFileDialog, QHBoxLayout, QLabel, QListWidget, QListWidgetItem, QMenu, QMessageBox, QPushButton,
@@ -16,6 +16,7 @@ from . import config as cfg
 from . import diffing
 from . import writer
 from . import yaml_editor
+from .widgets import WrapLabel
 
 COLORS = {"+": "#3a9a5b", "−": "#d24545", "~": "#c58a00"}
 
@@ -42,18 +43,25 @@ def changes_html(groups: dict | None, palette: QPalette) -> str:
     return "".join(parts)
 
 
+def auto_label(path: Path) -> str:
+    """A version's own name: what it is and when it was made."""
+    if path == writer.original_path(cfg.CONFIG_PATH):
+        return "Original (before Actuator)"
+    try:
+        stamp = datetime.strptime(path.stem.removeprefix("config-")[:15], "%Y%m%d-%H%M%S")
+    except ValueError:
+        return path.name
+    kind = "Manual backup" if "-backup" in path.stem else "Auto backup"
+    return f"{kind} at {stamp:%b %d, %H:%M:%S}"
+
+
 def _versions() -> list[tuple[str, Path]]:
-    out = []
-    for snap in writer.snapshots():
-        try:
-            stamp = datetime.strptime(snap.stem.removeprefix("config-")[:15], "%Y%m%d-%H%M%S")
-            out.append((f"Before save at {stamp:%b %d, %H:%M:%S}", snap))
-        except ValueError:
-            out.append((snap.name, snap))
+    """(label, path), newest first: the name someone gave it in Restore, or its own."""
+    paths = writer.snapshots()
     orig = writer.original_path(cfg.CONFIG_PATH)
     if orig.exists():
-        out.append(("Original (before Actuator)", orig))
-    return out
+        paths.append(orig)
+    return [(writer.version_name(p) or auto_label(p), p) for p in paths]
 
 
 class VersionsDialog(QDialog):
@@ -65,9 +73,18 @@ class VersionsDialog(QDialog):
         self.current = current
         self.chosen: Path | None = None
         self.list = QListWidget()
+        # Long names end in "…" instead of making the list scroll sideways.
+        self.list.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+        self.list.setTextElideMode(Qt.TextElideMode.ElideRight)
         self.list.currentItemChanged.connect(lambda item, _p: self._preview(item))
         self.list.itemDoubleClicked.connect(lambda *_: self._restore())
-        self.title = QLabel()
+        self.list.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
+        self.list.customContextMenuRequested.connect(self._menu)
+        self.list.itemChanged.connect(self._renamed)
+        # Esc while renaming: put the label back. (A committed rename reaches _renamed first.)
+        self.list.itemDelegate().closeEditor.connect(lambda *_: QTimer.singleShot(0, self._rename_closed))
+        self._renaming: tuple[QListWidgetItem, Path] | None = None
+        self.title = WrapLabel()  # a long custom name wraps rather than widening the window
         self.title.setStyleSheet("font-weight: 600;")
         self.view = QTextBrowser()
         self.view.setOpenLinks(False)
@@ -101,9 +118,6 @@ class VersionsDialog(QDialog):
         self.restore.clicked.connect(self._restore)
         close = QPushButton("Close")
         close.clicked.connect(self.reject)
-        note = QLabel("Restoring keeps your current config as a new version first, so it can be undone.")
-        note.setWordWrap(True)
-        note.setStyleSheet("color: palette(placeholder-text);")
         buttons = QHBoxLayout()
         buttons.addWidget(from_file)
         buttons.addWidget(self.open)
@@ -114,13 +128,15 @@ class VersionsDialog(QDialog):
         buttons.addWidget(close)
         layout = QVBoxLayout(self)
         layout.addWidget(split, 1)
-        layout.addWidget(note)
         layout.addLayout(buttons)
         self.resize(820, 520)
         self._fill()
         # Wide enough for the version names in this font, so they aren't cut off.
-        names = self.list.sizeHintForColumn(0) + 2 * self.list.frameWidth() + \
-            self.list.verticalScrollBar().sizeHint().width() + 8
+        # (Measured on the automatic names: a long custom name is cut short with "…" instead.)
+        labels = [auto_label(path) for _label, path in _versions()] or ["Manual backup at Oct 15, 12:00:00"]
+        icon = self.list.iconSize().width() + 8
+        names = max(self.list.fontMetrics().horizontalAdvance(t) for t in labels) + icon + \
+            2 * self.list.frameWidth() + self.list.verticalScrollBar().sizeHint().width() + 12
         self.split.setSizes([names, max(self.width() - names, 360)])
 
     def _fill(self, keep: Path | None = None):
@@ -131,6 +147,8 @@ class VersionsDialog(QDialog):
             except OSError:
                 broken = True
             item = QListWidgetItem(label)
+            if label != auto_label(path):  # renamed: the full name, and what and when it was
+                item.setToolTip(f"{label}\n{auto_label(path)}")
             if writer.is_locked(path):
                 item.setIcon(icons.lucide("lock"))
             item.setData(Qt.ItemDataRole.UserRole, str(path))
@@ -155,6 +173,8 @@ class VersionsDialog(QDialog):
         return Path(item.data(Qt.ItemDataRole.UserRole)) if item else None
 
     def _preview(self, item):
+        if item is None:  # the list is being refilled
+            return
         path = self._path()
         self.restore.setEnabled(path is not None)
         self.open.setEnabled(path is not None)
@@ -230,10 +250,52 @@ class VersionsDialog(QDialog):
         except OSError as e:
             QMessageBox.warning(self, "Actuator", f"Couldn't delete it.\n\n{e}")
             return
+        writer.set_version_name(path, None)
         self._fill()
         if self.list.count():
             self.list.setCurrentRow(min(row, self.list.count() - 1))
             self.list.setFocus()
+
+    def _menu(self, pos):
+        item = self.list.itemAt(pos)
+        if not item:
+            return
+        self.list.setCurrentItem(item)
+        path = self._path()
+        locked = writer.is_locked(path)
+        menu = QMenu(self)
+        menu.addAction(icons.icon("edit-rename"), "Rename", self._rename)
+        menu.addAction(icons.icon("object-unlocked" if locked else "object-locked"),
+                       "Unlock" if locked else "Lock", self._toggle_lock)
+        delete = menu.addAction(icons.icon("edit-delete"), "Delete", self._delete)
+        delete.setEnabled(not locked)  # locked versions are protected
+        menu.exec(self.list.viewport().mapToGlobal(pos))
+
+    def _rename(self):
+        item, path = self.list.currentItem(), self._path()
+        if not item or not path:
+            return
+        self.list.blockSignals(True)
+        item.setFlags(item.flags() | Qt.ItemFlag.ItemIsEditable)
+        self.list.blockSignals(False)
+        self._renaming = (item, path)
+        self.list.editItem(item)
+
+    def _renamed(self, item):
+        if not self._renaming or self._renaming[0] is not item:
+            return
+        path = self._renaming[1]
+        self._renaming = None
+        text = item.text().strip()
+        writer.set_version_name(path, None if text == auto_label(path) else text)  # empty: its own name
+        self._fill(keep=path)
+        self.list.setFocus()
+
+    def _rename_closed(self):
+        if self._renaming:
+            path = self._renaming[1]
+            self._renaming = None
+            self._fill(keep=path)
 
     def _from_file(self):
         source, _ = QFileDialog.getOpenFileName(self, "Restore from file", str(Path.home()), "YAML (*.yaml *.yml)")

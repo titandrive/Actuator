@@ -75,15 +75,31 @@ layout and keeps your original as `config.yaml.original`.
   top of the file, so a plain copy of the file is a complete backup.
 - Other comments you write by hand aren't kept when Actuator rewrites the file.
 - Saved versions are kept in `~/.local/share/actuator/snapshots/` (10 by default; change it in Options).
+- ☰ → Backup Now keeps the current file as a version that's locked, so it's never cleaned up
+  automatically. With git auto-commit on, it's also committed and pushed.
+- Restoring a version keeps your current config as a new version first, so a restore can be undone.
 - If the file is edited elsewhere, Actuator reloads it. If it isn't valid YAML, Actuator shows the error
   and won't write to the file until it's fixed.
 
 ## Developer mode
 
-Click the version number in Options ten times. Developer mode adds device settings (swipe angles,
-thresholds, timeouts), the full YAML editor, the condition builder, git auto-commit, and Store Preferences
-in Config, which keeps Actuator's options in `config.yaml` too, so restoring the config on a fresh install
-restores them as well.
+Click the version number at the bottom of Options ten times to turn on developer mode. A Developer
+Options section appears in Options; Turn off hides it again.
+
+- **Device Settings** (Open): how InputActions reads each kind of device, such as swipe angle
+  tolerance, motion thresholds and timeouts. Set them for all mice, touchpads or touchscreens, or for one
+  specific device. Wrong values can make gestures hard to trigger, but every change is saved as a version
+  you can restore.
+- **Enable YAML Editor**: adds YAML Editor to the ☰ menu, for editing the whole `config.yaml` directly,
+  with live validation. Every binding can also be viewed and edited as YAML with its YAML button, with or
+  without this.
+- **Enable Only If Conditions**: shows the Condition section in the binding editor, to limit a binding to
+  fullscreen or maximized windows, a window title, held modifier keys, a screen edge, and more.
+- **Store Preferences in Config**: keeps Actuator's own options (versions to keep, shown tabs, developer
+  mode and its options, git settings) in `config.yaml`, so restoring the config on a fresh install
+  restores them as well. Every change is saved straight away.
+- **Git Auto-Commit**: commits `config.yaml` to its git repository on every change, and can push it and
+  keep a generated README. See below.
 
 ## Git auto-commit (developer mode)
 

@@ -496,6 +496,9 @@ class OptionsDialog(QDialog):
         self.keep.setValue(keep)
         general.add_row("Saved versions to keep", "Older versions are deleted as new ones are saved.",
                         self.keep)
+        self.lock_manual = Toggle(self.settings.value("backups/lock_manual", True, type=bool))
+        general.add_row("Lock manual backups", "Backup Now versions are kept until you delete them.",
+                        self.lock_manual)
         layout.addWidget(section(general))
 
         # Device tabs
@@ -630,6 +633,7 @@ class OptionsDialog(QDialog):
         """Back to how Actuator starts out. Applied on OK, like any other change here."""
         self.autostart.setChecked(True)
         self.keep.setValue(10)
+        self.lock_manual.setChecked(True)
         for box in self.boxes.values():
             box.setChecked(True)
         if self.dev_box.isVisible():
@@ -1036,6 +1040,7 @@ class MainWindow(QMainWindow):
         self.yaml_action = menu.addAction(icons.icon("text-x-script"), "YAML Editor", self.open_yaml_editor)
         menu.addSeparator()
         menu.addAction(icons.icon("document-export"), "Export Config", self.export_yaml)
+        menu.addAction(icons.icon("document-save"), "Backup Now", self.backup_now)
         menu.addAction(icons.icon("document-revert"), "Restore", self.open_versions)
         menu.addSeparator()
         menu.addAction(icons.lucide("book-open"), "InputActions Wiki",
@@ -1095,6 +1100,7 @@ class MainWindow(QMainWindow):
             self.settings.setValue(f"dev/{key}", box.isChecked())
         self.settings.setValue("git/push", dialog.git_push.isChecked())
         self.settings.setValue("git/readme", dialog.git_readme.isChecked())
+        self.settings.setValue("backups/lock_manual", dialog.lock_manual.isChecked())
         self._apply_features()
         self._store_prefs()
         self._fill_sidebar()
@@ -1111,6 +1117,7 @@ class MainWindow(QMainWindow):
             "developer_options": ", ".join(k for k, _l, _n in DEV_FEATURES if on(f"dev/{k}")),
             "git_push": "on" if on("git/push") else "off",
             "git_readme": "on" if on("git/readme") else "off",
+            "lock_manual_backups": "on" if self.settings.value("backups/lock_manual", True, type=bool) else "off",
         }
 
     def _apply_prefs(self, prefs: dict[str, str]):
@@ -1131,6 +1138,8 @@ class MainWindow(QMainWindow):
         for name in ("git_push", "git_readme"):
             if name in prefs:
                 self.settings.setValue(name.replace("_", "/"), prefs[name] == "on")
+        if "lock_manual_backups" in prefs:
+            self.settings.setValue("backups/lock_manual", prefs["lock_manual_backups"] == "on")
         self._apply_features()
 
     def _store_prefs(self):
@@ -1485,6 +1494,19 @@ class MainWindow(QMainWindow):
         self.dirty = False
         self._after_write(previous, old)  # reloads, which also starts a fresh undo history
 
+    def backup_now(self):
+        """Keep the config file as it is now as a version; locked, unless that's turned off in Restore."""
+        lock = self.settings.value("backups/lock_manual", True, type=bool)
+        try:
+            target = writer.snapshot(cfg.CONFIG_PATH, manual=True, lock=lock)
+        except OSError as e:
+            QMessageBox.critical(self, "Actuator", f"Couldn't back up the config.\n\n{e}")
+            return
+        if target:
+            note = " Unsaved changes aren't included; save first to back them up." if self.dirty else ""
+            self.statusBar().showMessage(f"Backed up. Find it in ☰ → Restore.{note}", 8000)
+            self._git_sync(None, msg="Actuator: backup", always=True)  # and committed/pushed, with git on
+
     def open_versions(self):
         dialog = versions.VersionsDialog(self, None if self.broken else self.config)
         if dialog.exec() and dialog.chosen:
@@ -1548,8 +1570,9 @@ class MainWindow(QMainWindow):
         else:
             self._git_hide.start()
 
-    def _git_sync(self, old_text: str | None):
-        """Commit config.yaml (and push) after any write, if that developer option is on."""
+    def _git_sync(self, old_text: str | None, msg: str | None = None, always: bool = False):
+        """Commit config.yaml (and push) after any write, if that developer option is on. With
+        always, commit even an unchanged file (Backup Now leaves a marker in the history)."""
         if not self.feature("git_autocommit"):
             return
         path = cfg.CONFIG_PATH
@@ -1568,7 +1591,7 @@ class MainWindow(QMainWindow):
                 extra.append(readme_path)
             except Exception as e:  # noqa: BLE001 - a README is never worth blocking a commit
                 self._show_git("warn", "Couldn't write the README", str(e))
-        ok, out = gitsync.commit(path, gitsync.message(old_text, new_text), extra)
+        ok, out = gitsync.commit(path, msg or gitsync.message(old_text, new_text), extra, allow_empty=always)
         if not ok:
             self._show_git("error", "Commit failed", out or "git gave no details")
             return

@@ -77,18 +77,18 @@ def message(old_text: str | None, new_text: str) -> str:
     return f"Actuator: {subject}\n\n" + "\n".join(lines)
 
 
-def commit(path: Path, msg: str, extra: list[Path] = ()) -> tuple[bool, str]:
+def commit(path: Path, msg: str, extra: list[Path] = (), allow_empty: bool = False) -> tuple[bool, str]:
     """Commit just this file (and any extra ones, like a generated README). Other changes in the
-    repo are left alone."""
+    repo are left alone. With allow_empty, an unchanged file still gets a commit (a backup marker)."""
     folder = path.parent
     names = [path.name] + [str(x.relative_to(folder)) for x in extra]
     ok, out = _git(folder, "add", "--", *names)
     if not ok:
         return False, out
     ok, out = _git(folder, "diff", "--cached", "--quiet", "--", *names)
-    if ok:
+    if ok and not allow_empty:
         return True, "nothing to commit"  # no difference from the last commit
-    return _git(folder, "commit", "-m", msg, "--", *names)
+    return _git(folder, "commit", *(["--allow-empty"] if allow_empty else []), "-m", msg, "--", *names)
 
 
 INPUTACTIONS_URL = "https://github.com/InputActions"

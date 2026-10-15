@@ -119,6 +119,27 @@ class SavingTests(TempConfig):
         self.assertIn(oldest, left)
         self.assertEqual(len([x for x in left if not writer.is_locked(x)]), 2)
 
+    def test_manual_backup_is_named_and_locked(self):
+        target = writer.snapshot(self.path, manual=True, lock=True)
+        self.assertIn("-backup", target.stem)
+        self.assertTrue(writer.is_locked(target))
+        for _ in range(writer.SNAPSHOT_KEEP + 2):   # lots of saves later, it's still there
+            writer.snapshot(self.path)
+        self.assertTrue(target.exists())
+        from actuator import versions
+        self.assertTrue(any(label.startswith("Manual backup at") for label, p in versions._versions() if p == target))
+        self.assertFalse(writer.is_locked(writer.snapshot(self.path, manual=True)))  # locking turned off
+
+    def test_version_names(self):
+        from actuator import versions
+        snap = writer.snapshot(self.path)
+        auto = versions.auto_label(snap)
+        self.assertTrue(auto.startswith("Auto backup at"))
+        writer.set_version_name(snap, "Before the Firefox rework")
+        self.assertIn(("Before the Firefox rework", snap), versions._versions())
+        writer.set_version_name(snap, "")                       # empty: back to its own name
+        self.assertIn((auto, snap), versions._versions())
+
     def test_original_is_locked_by_default(self):
         orig = writer.original_path(self.path)
         self.assertTrue(writer.is_locked(orig))
