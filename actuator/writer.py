@@ -76,6 +76,10 @@ def render(config: cfg.Config) -> str:
         out += [f"# actuator:foldericon {f} = {i}" for f, i in config.folder_icons.items() if f in config.folders]
         out += [f"# actuator:device {n} = {t}" for n, t in config.device_types.items()]
         out.append("")
+    if config.prefs:
+        out.append("# Actuator's options (Options → Store Preferences in Config). Safe to edit.")
+        out += [f"# actuator:pref {k} = {v}" for k, v in config.prefs.items()]
+        out.append("")
 
     data = d.plain(config.data)
     sections = [s for s in SECTION_ORDER if s in data]

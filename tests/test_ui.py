@@ -154,7 +154,7 @@ class ConditionTests(AppTest):
         self.w.settings.setValue("dev/only_if", True)
         self.pick("Firefox")
         page = self.tab("Touchpad")
-        self.select_row(page, "3-finger swipe bottom to top")
+        self.select_row(page, "3-finger swipe up")
         cb = page.editor.conditions
         self.assertTrue(page.editor.cond_box.isVisibleTo(page))
         cb._add()                                            # Window is fullscreen
@@ -169,13 +169,13 @@ class ConditionTests(AppTest):
                                                 {"any": ["$window_fullscreen", "$keyboard_modifiers contains ctrl"]}])
         self.assertEqual((b.scope, b.app), ("app", "firefox"))   # still listed under Firefox
         self.pick("Firefox")
-        row = next(r for r in self.tab("Touchpad").rows() if r.text(0) == "3-finger swipe bottom to top")
+        row = next(r for r in self.tab("Touchpad").rows() if r.text(0) == "3-finger swipe up")
         self.assertIn("(only if +2)", row.text(1))
 
     def test_hidden_when_option_off(self):
         self.pick("Firefox")
         page = self.tab("Touchpad")
-        self.select_row(page, "3-finger swipe bottom to top")
+        self.select_row(page, "3-finger swipe up")
         self.assertFalse(page.editor.cond_box.isVisibleTo(page))
 
 
@@ -312,6 +312,29 @@ class OptionsAndDevicesTests(AppTest):
         self.w._fill_sidebar()
         tabs = self.w.pages.widget(0)
         self.assertNotIn("Touchscreen", [tabs.tabBar().tabData(i) for i in range(tabs.count())])
+
+
+class StoredPreferencesTests(AppTest):
+    def test_options_saved_in_config_and_restored_from_it(self):
+        self.w.settings.setValue("dev_mode", True)
+        self.w.settings.setValue("dev/store_prefs", True)
+        self.w.settings.setValue("tabs/Touchscreen", False)
+        self.w._store_prefs()
+        prefs = self.disk().prefs
+        self.assertEqual(prefs["tabs"], "Mouse, Keyboard, Touchpad")
+        self.assertIn("store_prefs", prefs["developer_options"])
+        self.assertIn("# actuator:pref developer_mode = on", self.path.read_text())
+        self.assertFalse(self.w.dirty)                        # written at once, not pending
+        # A fresh install: its own settings are empty, the restored config brings them back.
+        for key in ("tabs/Touchscreen", "dev_mode", "dev/store_prefs"):
+            self.w.settings.remove(key)
+        self.w.load()
+        self.assertFalse(self.w.tab_visible("Touchscreen"))
+        self.assertTrue(self.w.feature("store_prefs"))
+        # Turned off: the lines come out of the config.
+        self.w.settings.setValue("dev/store_prefs", False)
+        self.w._store_prefs()
+        self.assertEqual(self.disk().prefs, {})
 
 
 class GitIntegrationTests(AppTest):

@@ -35,6 +35,7 @@ ID_LINE = re.compile(r"^\s*-\s*id:\s*['\"]?([^'\"\s#]+)")
 DEVICE_LINE = re.compile(r"^\s*#\s*actuator:device\s+(.+?)\s*=\s*(\w+)\s*$")
 FOLDER_ICON_LINE = re.compile(r"^\s*#\s*actuator:foldericon\s+(.+?)\s*=\s*([a-z0-9-]+)\s*$")
 FOLDER_LINE = re.compile(r"^\s*#\s*actuator:folder\s+(.+?)\s*=\s*(.*?)\s*$")
+PREF_LINE = re.compile(r"^\s*#\s*actuator:pref\s+(\S+)\s*=\s*(.*?)\s*$")  # Actuator's own options
 WINDOW_CLASS = re.compile(r"^\$window_class\s*(==|matches)\s*(.+)$")
 
 
@@ -75,6 +76,7 @@ class Config:
     folder_icons: dict[str, str] = field(default_factory=dict)  # folder name -> Lucide icon name
     device_types: dict[str, str] = field(default_factory=dict)  # named device -> mouse/touchpad/...
     labels: dict[str, str] = field(default_factory=dict)  # binding id -> the user's note
+    prefs: dict[str, str] = field(default_factory=dict)  # Actuator's options, when stored in the config
 
     @property
     def apps(self) -> list[str]:
@@ -260,6 +262,8 @@ def loads(text: str, path: Path | None = None) -> Config:
             config.folder_icons[m.group(1)] = m.group(2)
         elif m := FOLDER_LINE.match(line):
             config.folders[m.group(1)] = [a.strip() for a in m.group(2).split(",") if a.strip()]
+        elif m := PREF_LINE.match(line):
+            config.prefs[m.group(1)] = m.group(2)
     # Notes: a "# Note:" comment applies to the next binding (its "- id:" line).
     pending = None
     for line in text.splitlines():

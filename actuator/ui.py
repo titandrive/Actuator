@@ -385,6 +385,8 @@ class SidebarTree(QTreeWidget):
 DEV_FEATURES = [  # (settings key, label, tooltip) — all off by default
     ("yaml_editor", "Enable YAML Editor", "Adds a YAML button to the toolbar to edit config.yaml directly."),
     ("only_if", "Enable Only If Conditions", "Shows the condition builder in the binding editor."),
+    ("store_prefs", "Store Preferences in Config",
+     "Saves these options in config.yaml, so restoring the config on a fresh install restores them too."),
     ("git_autocommit", "Git Auto-Commit",
      "Commits config.yaml to its git repository every time Actuator changes it. "
      f"See the <a href='{REPO_URL}#git-auto-commit-developer-mode'>README</a> for setup."),
@@ -1094,7 +1096,49 @@ class MainWindow(QMainWindow):
         self.settings.setValue("git/push", dialog.git_push.isChecked())
         self.settings.setValue("git/readme", dialog.git_readme.isChecked())
         self._apply_features()
+        self._store_prefs()
         self._fill_sidebar()
+
+    # Options stored in the config ------------------------------------------
+
+    def _prefs(self) -> dict[str, str]:
+        """This app's options as config lines: everything in Options but autostart (a KDE setting)."""
+        on = lambda key: self.settings.value(key, False, type=bool)  # noqa: E731
+        return {
+            "keep_versions": str(writer.SNAPSHOT_KEEP),
+            "tabs": ", ".join(t for t in cfg.DEVICE_TABS if self.tab_visible(t)),
+            "developer_mode": "on" if on("dev_mode") else "off",
+            "developer_options": ", ".join(k for k, _l, _n in DEV_FEATURES if on(f"dev/{k}")),
+            "git_push": "on" if on("git/push") else "off",
+            "git_readme": "on" if on("git/readme") else "off",
+        }
+
+    def _apply_prefs(self, prefs: dict[str, str]):
+        """Take options from the config's lines; anything missing or unreadable stays as it is."""
+        if prefs.get("keep_versions", "").isdigit():
+            writer.SNAPSHOT_KEEP = max(1, int(prefs["keep_versions"]))
+            self.settings.setValue("snapshots/keep", writer.SNAPSHOT_KEEP)
+        if "tabs" in prefs:
+            shown = {t.strip() for t in prefs["tabs"].split(",")}
+            for title in cfg.DEVICE_TABS:
+                self.settings.setValue(f"tabs/{title}", title in shown)
+        if "developer_mode" in prefs:
+            self.settings.setValue("dev_mode", prefs["developer_mode"] == "on")
+        if "developer_options" in prefs:
+            chosen = {k.strip() for k in prefs["developer_options"].split(",")}
+            for key, _label, _note in DEV_FEATURES:
+                self.settings.setValue(f"dev/{key}", key in chosen)
+        for name in ("git_push", "git_readme"):
+            if name in prefs:
+                self.settings.setValue(name.replace("_", "/"), prefs[name] == "on")
+        self._apply_features()
+
+    def _store_prefs(self):
+        """With Store Preferences in Config on, write the options into the config at once (saved,
+        and committed and pushed when git is set up); with it off, take them out."""
+        want = self._prefs() if self.feature("store_prefs") else {}
+        if self.config is not None and want != self.config.prefs:
+            self.apply_now(lambda c: setattr(c, "prefs", dict(want)))
 
     def _check_installed(self):
         if shutil.which("inputactions"):
@@ -1594,6 +1638,8 @@ class MainWindow(QMainWindow):
             self._set_broken(e)
             return
         self._set_broken(None)
+        if self.config.prefs:  # options stored in the config win, e.g. after restoring it elsewhere
+            self._apply_prefs(self.config.prefs)
         self.dirty = False
         self._reset_history()
         self._check_issues()

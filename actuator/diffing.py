@@ -116,6 +116,12 @@ def changes(current: cfg.Config, other: cfg.Config) -> dict[str, list[tuple[str,
         x, y = current.folder_icons.get(f), other.folder_icons.get(f)
         if x != y and f in other.folders:
             groups.setdefault("Other", []).append(("~", f"Icon of {f}", x or "folder", y or "folder"))
+    for key in [k for k in other.prefs if k not in current.prefs] + list(current.prefs):  # stored options
+        x, y = current.prefs.get(key), other.prefs.get(key)
+        if x != y:
+            groups.setdefault("Preferences", []).append(
+                ("+" if x is None else "−" if y is None else "~", key.replace("_", " ").capitalize(),
+                 "not stored" if x is None else x or "none", "not stored" if y is None else y or "none"))
     if current.folders != other.folders:
         groups.setdefault("Other", []).append(
             ("~", "Folders", ", ".join(current.folders) or "none", ", ".join(other.folders) or "none"))

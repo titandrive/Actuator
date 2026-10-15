@@ -24,13 +24,11 @@ KEY_NAMES = {
     "notification_center": "Notifications", "pickup_phone": "PickUp", "hangup_phone": "HangUp",
 }
 
-# InputActions' directions in words. A swipe is named by its motion ("right" is left to right);
-# "left_right" fires for either direction, not left-then-right.
+# InputActions' directions in words. "left_right" fires for either direction, not left-then-right.
 DIRECTIONS = {
     "left_right": "left or right", "up_down": "up or down", "any": "any direction",
 }
 SWIPE_DIRECTIONS = {
-    "right": "left to right", "left": "right to left", "up": "bottom to top", "down": "top to bottom",
     "left_right": "either direction (left/right)", "up_down": "either direction (up/down)",
 }
 
