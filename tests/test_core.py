@@ -154,6 +154,14 @@ class LabelTests(TempConfig):
         self.assertEqual(c.labels[new.id], "Inventory")
 
 
+class WindowClassTests(unittest.TestCase):
+    def test_wayland_app_ids(self):
+        self.assertEqual(apps.window_class("org.kde.dolphin", "dolphin"), "org.kde.dolphin")
+        self.assertEqual(apps.window_class("com.spotify.Client", ""), "com.spotify.Client")
+        self.assertEqual(apps.window_class("factorio", "Factorio"), "Factorio")  # X11 game
+        self.assertEqual(apps.window_class("firefox", ""), "firefox")
+
+
 class StrokeTests(unittest.TestCase):
     def test_stroke_actions_run_on_end(self):
         self.assertEqual(editor.default_stage("stroke"), "end")

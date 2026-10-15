@@ -57,6 +57,16 @@ def _runnable(entry: dict[str, str]) -> bool:
     return True
 
 
+def window_class(desktop_id: str, startup_wm_class: str) -> str:
+    """What InputActions will see as $window_class. Native Wayland apps report their app ID,
+    which for reverse-DNS launchers (org.kde.dolphin, Flatpaks) is the launcher's name, even
+    when StartupWMClass says otherwise (that's for X11). Otherwise StartupWMClass is the better
+    guess (games and other X11 apps), then the launcher's name."""
+    if "." in desktop_id:
+        return desktop_id
+    return startup_wm_class or desktop_id
+
+
 @lru_cache(maxsize=1)
 def installed() -> tuple[App, ...]:
     seen: dict[str, App] = {}
@@ -71,8 +81,7 @@ def installed() -> tuple[App, ...]:
             if (e.get("Type") != "Application" or e.get("NoDisplay") == "true"
                     or e.get("Hidden") == "true" or not e.get("Name") or not _runnable(e)):
                 continue
-            # On Wayland the window class is usually the desktop file's name; StartupWMClass wins if set.
-            seen[desktop_id] = App(e["Name"], e.get("StartupWMClass") or desktop_id, e.get("Icon", ""))
+            seen[desktop_id] = App(e["Name"], window_class(desktop_id, e.get("StartupWMClass", "")), e.get("Icon", ""))
     # Some apps ship several launchers for the same window (an installer's entry plus a manual one).
     # Bindings match the window class, so those are one app: keep the first of each.
     unique: dict[str, App] = {}
