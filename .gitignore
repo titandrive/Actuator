@@ -2,3 +2,8 @@ DESIGN.md
 __pycache__/
 *.egg-info/
 build/
+
+# makepkg output
+packaging/aur/*.tar.*
+packaging/aur/pkg/
+packaging/aur/src/
