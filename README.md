@@ -28,27 +28,34 @@ by hand (unless you want to).
 |---|---|---|
 | ![Touchpad gestures for Firefox, with the gesture editor](docs/screenshots/touchpad.png) | ![The Restore window listing saved versions and what restoring one would change](docs/screenshots/restore.png) | ![The Options window](docs/screenshots/options.png) |
 
-## Requirements
+## Installing
 
-- KDE Plasma 6 with [InputActions](https://wiki.inputactions.org/main/getting-started/installation/index.html)
-  (the KWin plugin and the `inputactions` command)
-- Python 3.11+, PySide6, ruamel.yaml
+Actuator needs KDE Plasma 6 with [InputActions](https://wiki.inputactions.org/main/getting-started/installation/index.html)
+(the KWin plugin and the `inputactions` command).
 
-On Arch-based systems:
+### Arch-based systems
+
+Actuator will be on the AUR as `actuator`. Until then, build the same package from this repository:
 
 ```bash
-sudo pacman -S --needed pyside6 python-ruamel-yaml
+git clone https://github.com/titandrive/Actuator
+cd Actuator/packaging/aur
+makepkg -si
 ```
 
-## Running
+The package depends on `inputactions-kwin` and `inputactions-ctl` from the AUR, so install those first
+(`paru -S inputactions-kwin inputactions-ctl`). If you installed InputActions with its own installer
+instead, use `makepkg -si --nodeps`. Remove Actuator with `sudo pacman -R actuator`.
 
-From a clone of this repository:
+### Other distributions
+
+Install Python 3.11+, PySide6 and ruamel.yaml, then run it from a clone of this repository:
 
 ```bash
 python3 -m actuator
 ```
 
-To install the `actuator` command and add Actuator to your app launcher:
+To add the `actuator` command and an app launcher entry:
 
 ```bash
 pipx install --system-site-packages .
