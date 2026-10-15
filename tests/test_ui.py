@@ -23,7 +23,7 @@ class StartupTests(AppTest):
         self.assertIn("Factorio", labels)
         tabs = self.w.pages.widget(0)
         titles = [tabs.tabBar().tabData(i) for i in range(tabs.count())]
-        self.assertEqual(titles, ["Mouse", "Touchpad", "Keyboard", "Touchscreen"])  # no Pointer
+        self.assertEqual(titles, ["Mouse", "Keyboard", "Touchpad", "Touchscreen"])  # no Pointer
 
     def test_lists_show_only_bound_buttons(self):
         self.pick("Global")

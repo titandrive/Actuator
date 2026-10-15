@@ -15,8 +15,8 @@ MANAGED_HEADER = "# InputActions configuration, managed by Actuator."
 # YAML section key for each device tab, in display order.
 DEVICES = {
     "Mouse": "mouse",
-    "Touchpad": "touchpad",
     "Keyboard": "keyboard",
+    "Touchpad": "touchpad",
     "Touchscreen": "touchscreen",
     "Pointer": "pointer",
 }
