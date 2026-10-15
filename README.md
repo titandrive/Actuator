@@ -1,6 +1,6 @@
 # Actuator
 
-A desktop app for configuring [InputActions](https://wiki.inputactions.org/) on KDE Plasma — mouse
+A desktop app for configuring [InputActions](https://github.com/InputActions) on KDE Plasma — mouse
 buttons, touchpad and touchscreen gestures, and the per-app actions they trigger — without editing YAML
 by hand (unless you want to).
 
