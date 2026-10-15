@@ -829,8 +829,21 @@ class BindingsPage(QWidget):
         split = QSplitter(Qt.Orientation.Vertical)
         split.addWidget(top)
         split.addWidget(scroll)
+        split.setStretchFactor(0, 0)  # the list keeps its height; the editor gets the rest
+        split.setStretchFactor(1, 1)
         split.setSizes([240, 420])
+        self.split, self._top = split, top
         QVBoxLayout(self).addWidget(split)
+
+    def _fit_list(self):
+        """Size the list to its rows (3 to 8 of them), so a short list doesn't leave empty space
+        while the editor below scrolls."""
+        rows = max(3, min(self.tree.topLevelItemCount(), 8))
+        row = self.tree.sizeHintForRow(0) if self.tree.topLevelItemCount() else self.tree.fontMetrics().height() + 8
+        frame = self.tree.frameWidth() * 2
+        list_height = self.tree.header().sizeHint().height() + rows * row + frame + 4
+        bar = self.add_bar.sizeHint().height() + self._top.layout().spacing()
+        self.split.setSizes([list_height + bar, max(self.split.height() - list_height - bar, 400)])
 
     def add_button(self, widget: QWidget):
         self.add_bar.insertWidget(self.add_bar.count() - 1, widget)
@@ -861,6 +874,7 @@ class BindingsPage(QWidget):
         for i in range(self.tree.columnCount() - 1):
             header.setSectionResizeMode(i, header.ResizeMode.ResizeToContents)
         header.setStretchLastSection(True)
+        self._fit_list()
         rows = list(self.rows())
         target = next((r for r in rows if select and select(r.data(0, ROLE))), rows[0] if rows else None)
         if target:
@@ -1604,6 +1618,9 @@ class MainWindow(QMainWindow):
             item.setFirstColumnSpanned(True)  # only works once it's in the tree
 
         def count(payload) -> str:
+            if isinstance(payload, tuple) and payload[0] == "folder":  # all its apps' bindings
+                members = [a for a in self.config.folders.get(payload[1], []) if a in self.config.apps]
+                return str(sum(len(self._bindings("app", a)) for a in members))
             if not (isinstance(payload, tuple) and payload[0] in ("global", "app")):
                 return ""
             return str(len(self._bindings(*payload)))
@@ -1627,12 +1644,11 @@ class MainWindow(QMainWindow):
         apps = self.config.apps
         for folder, members in self.config.folders.items():
             shown = [a for a in members if a in apps]
-            f = entry(f"{folder}  ({len(shown)})", "folder", ("folder", folder))
+            f = entry(folder, "folder", ("folder", folder))  # its count: the bindings of its apps
             f.setFlags(Qt.ItemFlag.ItemIsEnabled | Qt.ItemFlag.ItemIsDropEnabled)  # not a page
             font = f.font(0)
             font.setBold(True)
             f.setFont(0, font)
-            f.setFirstColumnSpanned(True)  # no count column, so one cell: one hover box
             for app in shown:
                 items[("app", app)] = entry(apps_mod.display_name(app), apps_mod.icon_name(app), ("app", app), f)
             f.setExpanded(folder not in collapsed)
@@ -1775,7 +1791,7 @@ class MainWindow(QMainWindow):
         if item is None:
             return
         self.sidebar.blockSignals(True)
-        item.setText(0, folder)  # just the name while editing, without the app count
+        item.setText(0, folder)
         item.setFlags(item.flags() | Qt.ItemFlag.ItemIsEditable)
         self.sidebar.blockSignals(False)
         self._renaming = (item, folder)

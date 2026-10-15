@@ -687,6 +687,7 @@ class BindingEditor(QWidget):
         self.show_conditions = True  # the Only if builder (a developer option in the app)
 
         self.title = WrapLabel()
+        self.title.setAlignment(Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter)  # level with its buttons
         self.title.setStyleSheet("font-weight: 600; font-size: 11pt;")
         self.yaml_button = QPushButton(icons.icon("text-x-script"), "YAML")
         self.yaml_button.setCheckable(True)

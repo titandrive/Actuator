@@ -1,6 +1,6 @@
 """Small shared widgets."""
 
-from PySide6.QtCore import Property, QPropertyAnimation, QRectF, QSize, Qt, Signal
+from PySide6.QtCore import Property, QPropertyAnimation, QRect, QRectF, QSize, Qt, Signal
 from PySide6.QtGui import QColor, QPainter
 from PySide6.QtWidgets import (
     QAbstractButton, QFormLayout, QFrame, QHBoxLayout, QLabel, QSizePolicy, QVBoxLayout, QWidget,
@@ -105,12 +105,33 @@ LABEL_WIDTH = 86  # one label column, shared by every editor card so rows line u
 class WrapLabel(QLabel):
     """A label that wraps to its width and always gets the height that takes. Plain wrapped labels
     in forms and cards often get their last line cut off, and unwrapped ones push the page wider
-    than the window; this keeps its minimum height in step with its width instead."""
+    than the window; this keeps its minimum height in step with its width instead. Its natural
+    width is its text's, up to MAX_WIDTH, so short hints stay on one line."""
+
+    MAX_WIDTH = 560
 
     def __init__(self, text: str = "", parent=None):
         super().__init__(text, parent)
         self.setWordWrap(True)
+        self.setAlignment(Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignTop)
         self.setSizePolicy(QSizePolicy.Policy.Preferred, QSizePolicy.Policy.Minimum)
+
+    def _text_height(self, width: int) -> int:
+        # Measured directly: QLabel's own heightForWidth can stick at an earlier, narrower answer.
+        m = self.contentsMargins()
+        inner = max(width - m.left() - m.right(), 1)
+        rect = self.fontMetrics().boundingRect(QRect(0, 0, inner, 100_000),
+                                               int(Qt.TextFlag.TextWordWrap), self.text())
+        return rect.height() + m.top() + m.bottom()
+
+    def sizeHint(self) -> QSize:
+        m = self.contentsMargins()
+        width = min(self.fontMetrics().horizontalAdvance(self.text()) + m.left() + m.right() + 2,
+                    self.MAX_WIDTH)
+        return QSize(width, self._text_height(width))
+
+    def minimumSizeHint(self) -> QSize:
+        return QSize(60, self.fontMetrics().height())
 
     def resizeEvent(self, event):
         super().resizeEvent(event)
@@ -118,12 +139,14 @@ class WrapLabel(QLabel):
 
     def setText(self, text: str):
         super().setText(text)
+        self.updateGeometry()
         self._fit()
 
     def _fit(self):
-        height = self.heightForWidth(self.width()) if self.width() > 0 else -1
-        if height > 0 and height != self.minimumHeight():
-            self.setMinimumHeight(height)
+        if self.width() > 0:
+            height = self._text_height(self.width())
+            if height != self.minimumHeight():
+                self.setMinimumHeight(height)
 
 
 class Section(QWidget):
