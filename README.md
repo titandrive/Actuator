@@ -131,9 +131,7 @@ PYTHONPATH=. python3 -m unittest discover -s tests
 
 ## How it was made
 
-Actuator was vibe coded: written with an AI coding assistant (Claude), with a person directing the
-design, testing it on real hardware and reviewing the changes. It has an automated test suite, but expect
-rough edges, and please open an issue if you hit one.
+Actuator was vibe coded with Claude.
 
 ## License
 
