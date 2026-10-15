@@ -20,6 +20,8 @@ DEVICES = {
     "Touchscreen": "touchscreen",
     "Pointer": "pointer",
 }
+# The tabs Actuator shows. Pointer (hover) bindings are still read and kept in the file, just not shown.
+DEVICE_TABS = {title: section for title, section in DEVICES.items() if section != "pointer"}
 
 # Button registry lines Actuator writes at the top of the file:
 #   # actuator:button forward = Side button 1

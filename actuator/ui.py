@@ -499,8 +499,7 @@ class OptionsDialog(QDialog):
         tab_card = Card("Device tabs")
         self.boxes = {}
         hints = {"Mouse": "Mouse buttons and mouse gestures", "Touchpad": "Swipes, pinches, taps and more",
-                 "Keyboard": "Keyboard shortcuts", "Touchscreen": "Touchscreen gestures",
-                 "Pointer": "Hovering over screen areas"}
+                 "Keyboard": "Keyboard shortcuts", "Touchscreen": "Touchscreen gestures"}
         for title, on in tabs.items():
             t = Toggle(on)
             t.toggled.connect(self._keep_one)
@@ -1029,7 +1028,7 @@ class MainWindow(QMainWindow):
 
     def show_options(self):
         autostart = starts_at_login()
-        dialog = OptionsDialog(self, {t: self.tab_visible(t) for t in cfg.DEVICES}, autostart,
+        dialog = OptionsDialog(self, {t: self.tab_visible(t) for t in cfg.DEVICE_TABS}, autostart,
                                writer.SNAPSHOT_KEEP)
         if dialog.exec() != QDialog.DialogCode.Accepted:
             return
@@ -1839,7 +1838,7 @@ class MainWindow(QMainWindow):
         self.current = (scope, app)
         self.settings.setValue("last/page", f"{scope}|{app or ''}")
         tabs = QTabWidget()
-        for title, section in cfg.DEVICES.items():
+        for title, section in cfg.DEVICE_TABS.items():
             if self.tab_visible(title):
                 page = self._mouse_page(scope, app, select) if section == "mouse" else \
                     self._gesture_page(scope, app, section, select)

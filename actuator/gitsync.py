@@ -131,7 +131,7 @@ def readme(config: cfg.Config) -> str:
 
     def table(bindings) -> list[str]:
         out = []
-        for section_title, section in cfg.DEVICES.items():
+        for section_title, section in cfg.DEVICE_TABS.items():
             rows = [b for b in bindings if (b.section == section and not b.button) or
                     (section == "mouse" and b.button)]
             rows = [b for b in rows if not (section == "keyboard" and b.button)]
