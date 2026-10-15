@@ -164,6 +164,15 @@ class StrokeTests(unittest.TestCase):
         self.assertEqual(editor.detect_mode(editor.end_only_actions(hold)), ("Press keys", {"on": "end", "keys": "F"}))
 
 
+class StrokeParseTests(unittest.TestCase):
+    def test_short_and_long_strokes(self):
+        self.assertEqual(editor.parse_stroke("ZDIAnQAxZAA=\n"), "ZDIAnQAxZAA=")  # a straight line
+        long = "PgwAAE8LBRldGgwpZDEUN19LHUhTWSNgMl0uphJTObUERj/JAChJ2gUaT/AaDVf7QAZkAA=="
+        self.assertEqual(editor.parse_stroke(long), long)
+        self.assertIsNone(editor.parse_stroke("Stroke recording requires a valid configuration to be active."))
+        self.assertIsNone(editor.parse_stroke(""))
+
+
 class FingerTests(TempConfig):
     def test_defaults_and_ranges_per_gesture(self):
         c = cfg.load(self.path)

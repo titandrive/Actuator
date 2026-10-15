@@ -377,7 +377,13 @@ def load_yaml(text: str):
     return YAML(typ="safe").load(text)
 
 
-STROKE_TOKEN = re.compile(r"[A-Za-z0-9+/]{16,}={0,2}")
+# record-stroke prints the stroke alone on a line, as base64. A straight line is only ~12 characters.
+STROKE_LINE = re.compile(r"^[A-Za-z0-9+/]{4,}={0,2}$")
+
+
+def parse_stroke(output: str) -> str | None:
+    lines = [line.strip() for line in output.splitlines() if STROKE_LINE.match(line.strip())]
+    return lines[-1] if lines else None
 
 
 class StrokeRecorder(QDialog):
@@ -436,8 +442,8 @@ class StrokeRecorder(QDialog):
 
     def _start(self):
         self._show("Draw the shape now",
-                   "Hold a mouse button and move, or draw with your fingers on the touchpad. "
-                   "It's recorded when you let go.")
+                   "Move the mouse in the shape, or draw it on the touchscreen. Recording stops "
+                   "a moment after you stop moving.")
         self.proc.start("inputactions", ["record-stroke"])
 
     def _error(self, error):
@@ -446,9 +452,9 @@ class StrokeRecorder(QDialog):
 
     def _finished(self, *_):
         out = re.sub(r"\x1b\[[0-9;]*m", "", bytes(self.proc.readAll()).decode(errors="replace")).strip()
-        tokens = STROKE_TOKEN.findall(out)
-        if tokens and self.proc.exitCode() == 0:
-            self.stroke = max(tokens, key=len)  # the encoded stroke is the long base64 string
+        stroke = parse_stroke(out)
+        if stroke:
+            self.stroke = stroke
             self.accept()
         elif "valid configuration" in out:
             self._show("Couldn't record",
