@@ -941,9 +941,8 @@ class MainWindow(QMainWindow):
         self.sidebar.customContextMenuRequested.connect(self._sidebar_menu)
         self.pages = QStackedWidget()
         side = QWidget()
-        side.setMaximumWidth(240)
         sl = QVBoxLayout(side)
-        sl.setContentsMargins(0, 0, 0, 0)
+        sl.setContentsMargins(6, 0, 6, 6)  # clear of the window's edges and the divider beside it
         sl.addWidget(self.sidebar)
         add_row = QHBoxLayout()
         add_app = QPushButton(icons.icon("list-add"), "Add app")
@@ -957,6 +956,12 @@ class MainWindow(QMainWindow):
         split.addWidget(side)
         split.addWidget(self.pages)
         split.setStretchFactor(1, 1)
+        split.setCollapsible(0, False)
+        # The sidebar starts 240 wide and can be dragged wider or narrower; the width is remembered.
+        # (A maximum width instead left an empty strip whenever the splitter gave it more room.)
+        width = self.settings.value("sidebar/width", 240, type=int)
+        split.setSizes([width, max(self.width() - width, 600)])
+        split.splitterMoved.connect(lambda *_: self.settings.setValue("sidebar/width", split.sizes()[0]))
         self.body = split
         central = QWidget()
         cl = QVBoxLayout(central)
@@ -1012,9 +1017,9 @@ class MainWindow(QMainWindow):
 
         menu = QMenu(self)
         menu.addAction(icons.icon("configure"), "Options", self.show_options)
-        self.yaml_action = menu.addAction(icons.icon("text-x-script"), "Edit YAML", self.open_yaml_editor)
+        self.yaml_action = menu.addAction(icons.icon("text-x-script"), "YAML Editor", self.open_yaml_editor)
         menu.addSeparator()
-        menu.addAction(icons.icon("document-export"), "Export YAML", self.export_yaml)
+        menu.addAction(icons.icon("document-export"), "Export Config", self.export_yaml)
         menu.addAction(icons.icon("document-revert"), "Restore", self.open_versions)
         menu.addSeparator()
         menu.addAction(icons.lucide("book-open"), "InputActions Wiki",
@@ -1543,7 +1548,7 @@ class MainWindow(QMainWindow):
 
     def export_yaml(self):
         default = Path.home() / f"inputactions-{date.today().isoformat()}.yaml"
-        target, _ = QFileDialog.getSaveFileName(self, "Export YAML", str(default), "YAML (*.yaml *.yml)")
+        target, _ = QFileDialog.getSaveFileName(self, "Export Config", str(default), "YAML (*.yaml *.yml)")
         if target:
             shutil.copy2(cfg.CONFIG_PATH, target)
 
@@ -1861,6 +1866,7 @@ class MainWindow(QMainWindow):
         self.current = (scope, app)
         self.settings.setValue("last/page", f"{scope}|{app or ''}")
         tabs = QTabWidget()
+        tabs.setDocumentMode(True)  # no frame around the whole tab area
         for title, section in cfg.DEVICE_TABS.items():
             if self.tab_visible(title):
                 build = (lambda: self._mouse_page(scope, app, select)) if section == "mouse" else \

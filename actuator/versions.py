@@ -185,6 +185,8 @@ class VersionsDialog(QDialog):
         if path:
             writer.set_locked(path, not writer.is_locked(path))
             self._fill(keep=path)
+            # Back to the list: left without focus, the theme draws it dimmed until it's clicked.
+            self.list.setFocus()
 
     def _view(self):
         path = self._path()
@@ -226,6 +228,7 @@ class VersionsDialog(QDialog):
         self._fill()
         if self.list.count():
             self.list.setCurrentRow(min(row, self.list.count() - 1))
+            self.list.setFocus()
 
     def _from_file(self):
         source, _ = QFileDialog.getOpenFileName(self, "Restore from file", str(Path.home()), "YAML (*.yaml *.yml)")

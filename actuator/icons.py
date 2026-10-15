@@ -39,6 +39,11 @@ def _text_color() -> str:
     return app.palette().color(QPalette.ColorRole.Text).name() if app else "#888888"
 
 
+def _highlighted_text_color() -> str:
+    app = QApplication.instance()
+    return app.palette().color(QPalette.ColorRole.HighlightedText).name() if app else "#ffffff"
+
+
 @lru_cache(maxsize=None)
 def _svg(name: str, color: str, filled: bool) -> bytes:
     text = (ICON_DIR / f"{name}.svg").read_text().replace("currentColor", color)
@@ -63,11 +68,15 @@ def _pixmap(name: str, color: str, size: int, filled: bool = False, opacity: flo
 def lucide(name: str, color: str | None = None, filled: bool = False) -> QIcon:
     """A Lucide icon in the given color (the theme's text color by default), with a faded
     version for its disabled state."""
+    themed = color is None
     color = color or _text_color()
+    selected = _highlighted_text_color()
     out = QIcon()
     for size in SIZES:
         out.addPixmap(_pixmap(name, color, size, filled), QIcon.Mode.Normal)
         out.addPixmap(_pixmap(name, color, size, filled, opacity=0.35), QIcon.Mode.Disabled)
+        if themed:  # on a highlighted row, follow the row's text color like the label does
+            out.addPixmap(_pixmap(name, selected, size, filled), QIcon.Mode.Selected)
     return out
 
 
