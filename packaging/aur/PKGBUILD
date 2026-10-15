@@ -1,0 +1,35 @@
+# Maintainer: titandrive <240087026+titandrive@users.noreply.github.com>
+
+pkgname=actuator
+pkgver=0.1.0
+pkgrel=1
+pkgdesc="A GUI for configuring InputActions mouse, touchpad, touchscreen and keyboard bindings on KDE Plasma"
+arch=('any')
+url="https://github.com/titandrive/Actuator"
+license=('MIT')
+depends=(
+  'python'
+  'pyside6'
+  'python-ruamel-yaml'
+  'qt6-tools'         # qdbus6: loading the KWin plugin, pausing shortcuts while recording
+  'kconfig'           # kreadconfig6 / kwriteconfig6: whether the plugin is enabled
+  'inputactions-kwin'
+  'inputactions-ctl'
+)
+makedepends=('python-build' 'python-installer' 'python-setuptools' 'python-wheel')
+optdepends=('git: auto-commit your config (developer mode)')
+source=("$pkgname-$pkgver.tar.gz::$url/archive/refs/tags/v$pkgver.tar.gz")
+sha256sums=('c80d9b88fb383f9000083dacdc0cc2ece07e515b054b729d717ec24de4c5e092')
+
+build() {
+  cd "Actuator-$pkgver"
+  python -m build --wheel --no-isolation
+}
+
+package() {
+  cd "Actuator-$pkgver"
+  python -m installer --destdir="$pkgdir" dist/*.whl
+  install -Dm644 data/actuator.desktop "$pkgdir/usr/share/applications/actuator.desktop"
+  install -Dm644 LICENSE "$pkgdir/usr/share/licenses/$pkgname/LICENSE"
+  install -Dm644 actuator/icons/LICENSE "$pkgdir/usr/share/licenses/$pkgname/LICENSE.lucide"
+}

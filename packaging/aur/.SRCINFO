@@ -1,0 +1,23 @@
+pkgbase = actuator
+	pkgdesc = A GUI for configuring InputActions mouse, touchpad, touchscreen and keyboard bindings on KDE Plasma
+	pkgver = 0.1.0
+	pkgrel = 1
+	url = https://github.com/titandrive/Actuator
+	arch = any
+	license = MIT
+	makedepends = python-build
+	makedepends = python-installer
+	makedepends = python-setuptools
+	makedepends = python-wheel
+	depends = python
+	depends = pyside6
+	depends = python-ruamel-yaml
+	depends = qt6-tools
+	depends = kconfig
+	depends = inputactions-kwin
+	depends = inputactions-ctl
+	optdepends = git: auto-commit your config (developer mode)
+	source = actuator-0.1.0.tar.gz::https://github.com/titandrive/Actuator/archive/refs/tags/v0.1.0.tar.gz
+	sha256sums = c80d9b88fb383f9000083dacdc0cc2ece07e515b054b729d717ec24de4c5e092
+
+pkgname = actuator
