@@ -25,7 +25,7 @@ DEVICES = {
 #   # actuator:button forward = Side button 1
 #   # actuator:button leftshift+leftmeta+leftbrace = Wheel tilt left
 BUTTON_LINE = re.compile(r"^\s*#\s*actuator:button\s+(\S+)\s*=\s*(.+?)\s*$")
-APP_LINE = re.compile(r"^\s*#\s*actuator:app\s+(\S+)\s*$")
+APP_LINE = re.compile(r"^\s*#\s*actuator:app\s+(.+?)\s*$")  # app names can have spaces
 DEVICE_LINE = re.compile(r"^\s*#\s*actuator:device\s+(.+?)\s*=\s*(\w+)\s*$")
 FOLDER_ICON_LINE = re.compile(r"^\s*#\s*actuator:foldericon\s+(.+?)\s*=\s*([a-z0-9-]+)\s*$")
 FOLDER_LINE = re.compile(r"^\s*#\s*actuator:folder\s+(.+?)\s*=\s*(.*?)\s*$")

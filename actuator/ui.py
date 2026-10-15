@@ -583,6 +583,19 @@ class OptionsDialog(QDialog):
         self.git_push = Toggle(self.settings.value("git/push", False, type=bool))
         push_row.addWidget(self.git_push)
         gl.addLayout(push_row)
+        readme_row = QHBoxLayout()
+        readme_label = QLabel("Generate README")
+        readme_label.setToolTip("Keeps a README.md in the repository listing all your bindings, "
+                                "updated with every push")
+        readme_row.addWidget(readme_label)
+        readme_row.addStretch(1)
+        self.git_readme = Toggle(self.settings.value("git/readme", False, type=bool))
+        readme_row.addWidget(self.git_readme)
+        gl.addLayout(readme_row)
+        # Only meaningful when pushing: the README is for the repository's web page.
+        for w in (readme_label, self.git_readme):
+            w.setEnabled(self.git_push.isChecked())
+            self.git_push.toggled.connect(w.setEnabled)
         st = gitsync.status(cfg.CONFIG_PATH)
         ok_mark, bad_mark, warn_mark = (icons.img("check", "#2e9e5b"), icons.img("x", "#d24545"),
                                         icons.img("triangle-alert", "#c58a00"))
@@ -671,6 +684,7 @@ class OptionsDialog(QDialog):
             for box in self.features.values():
                 box.setChecked(False)
             self.git_push.setChecked(False)
+            self.git_readme.setChecked(False)
 
     def _toast(self, text: str):
         """A small Android-style message just above the version label."""
@@ -1087,6 +1101,7 @@ class MainWindow(QMainWindow):
         for key, box in dialog.features.items():
             self.settings.setValue(f"dev/{key}", box.isChecked())
         self.settings.setValue("git/push", dialog.git_push.isChecked())
+        self.settings.setValue("git/readme", dialog.git_readme.isChecked())
         self._apply_features()
         self._fill_sidebar()
 
@@ -1506,7 +1521,16 @@ class MainWindow(QMainWindow):
                            "See the README's Git auto-commit section for setup.")
             return
         new_text = self._disk_text() or ""
-        ok, out = gitsync.commit(path, gitsync.message(old_text, new_text))
+        extra = []
+        pushing = self.settings.value("git/push", False, type=bool)
+        if pushing and self.settings.value("git/readme", False, type=bool) and self.config:
+            readme_path = path.parent / "README.md"
+            try:
+                readme_path.write_text(gitsync.readme(cfg.loads(new_text, path)))
+                extra.append(readme_path)
+            except Exception as e:  # noqa: BLE001 - a README is never worth blocking a commit
+                self._show_git("warn", "Couldn't write the README", str(e))
+        ok, out = gitsync.commit(path, gitsync.message(old_text, new_text), extra)
         if not ok:
             self._show_git("error", "Commit failed", out or "git gave no details")
             return
