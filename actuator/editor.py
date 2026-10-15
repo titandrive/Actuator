@@ -19,7 +19,7 @@ from . import config as cfg
 from . import describe as d
 from . import keys
 from . import pause
-from .widgets import ToggleRow
+from .widgets import Section, ToggleRow, tidy_form
 
 # Trigger types each device section supports.
 GESTURE_TYPES = {
@@ -530,7 +530,7 @@ class BindingEditor(QWidget):
         self.show_conditions = True  # the Only if builder (a developer option in the app)
 
         self.title = QLabel()
-        self.title.setStyleSheet("font-weight: 600;")
+        self.title.setStyleSheet("font-weight: 600; font-size: 11pt;")
         self.yaml_button = QPushButton(icons.icon("text-x-script"), "YAML")
         self.yaml_button.setCheckable(True)
         self.yaml_button.toggled.connect(self._toggle_yaml)
@@ -546,8 +546,8 @@ class BindingEditor(QWidget):
         head.addWidget(self.delete_button)
 
         # When
-        self.when_box = QGroupBox("Trigger")
-        self.when_form = QFormLayout(self.when_box)
+        self.when_box = Section("Trigger")
+        self.when_form = QFormLayout(self.when_box.card)
         self.trigger_label = QLabel()
         self.type_box = QComboBox()  # for gestures, whose type can be changed
         self.type_box.currentTextChanged.connect(self._type_changed)
@@ -581,19 +581,22 @@ class BindingEditor(QWidget):
         self.when_form.addRow("Direction", self.direction)
         self.when_form.addRow("", self.instant)
         self.when_form.addRow("", self.block)
+        tidy_form(self.when_form)
         self.fingers.valueChanged.connect(self._trigger_edited)
         self.direction.currentTextChanged.connect(self._trigger_edited)
         self.instant.toggled.connect(self._trigger_edited)
         self.block.toggled.connect(self._trigger_edited)
 
         # Only if
-        self.cond_box = QGroupBox("Condition (optional)")
+        self.cond_box = Section("Condition (optional)")
         self.conditions = ConditionBuilder()
         self.conditions.changed.connect(self._conditions_edited)
-        QVBoxLayout(self.cond_box).addWidget(self.conditions)
+        cond_layout = QVBoxLayout(self.cond_box.card)
+        cond_layout.setContentsMargins(14, 12, 14, 12)
+        cond_layout.addWidget(self.conditions)
 
         # Do
-        self.do_box = QGroupBox("Action")
+        self.do_box = Section("Action")
         self.mode = QComboBox()
         self.mode.addItems(MODES)
         self.mode.currentTextChanged.connect(self._mode_changed)
@@ -625,7 +628,7 @@ class BindingEditor(QWidget):
         self.value.textEdited.connect(lambda _t: self._do_edited(quiet=True))
         self.value.editingFinished.connect(self._do_edited)
         self.value_hint = QLabel()
-        self.value_hint.setWordWrap(True)
+        self.value_hint.setWordWrap(False)  # one line: a wrapped hint got cut off by the card's sizing
         self.value_hint.setStyleSheet("color: palette(placeholder-text);")
         self.error = QLabel()
         self.error.setStyleSheet("color: #d24545;")
@@ -643,6 +646,7 @@ class BindingEditor(QWidget):
         simple_form.addRow("When", self.stage)
         simple_form.addRow("Value", value_row)
         simple_form.addRow("", self.value_hint)
+        tidy_form(simple_form, margins=False)  # nested in the Action card: same label column as its Type row
         self.custom = QWidget()
         custom_layout = QVBoxLayout(self.custom)
         custom_layout.setContentsMargins(0, 0, 0, 0)
@@ -652,20 +656,22 @@ class BindingEditor(QWidget):
         self.do_stack = QStackedWidget()
         self.do_stack.addWidget(self.simple)
         self.do_stack.addWidget(self.custom)
-        do_form = QFormLayout(self.do_box)
+        do_form = QFormLayout(self.do_box.card)
         do_form.addRow("Type", self.mode)
         do_form.addRow(self.do_stack)
         do_form.addRow(self.error)
+        tidy_form(do_form)
 
         # Whole-binding YAML
-        self.yaml_box = QGroupBox("YAML for this binding")
+        self.yaml_box = Section("YAML for this binding")
         self.yaml = QPlainTextEdit()
         self.yaml.setMinimumHeight(220)
         self.yaml_apply = QPushButton("Apply YAML")
         self.yaml_apply.clicked.connect(self._apply_yaml)
         self.yaml_error = QLabel()
         self.yaml_error.setStyleSheet("color: #d24545;")
-        yl = QVBoxLayout(self.yaml_box)
+        yl = QVBoxLayout(self.yaml_box.card)
+        yl.setContentsMargins(14, 12, 14, 12)
         yl.addWidget(self.yaml)
         row = QHBoxLayout()
         row.addWidget(self.yaml_error, 1)
@@ -673,10 +679,14 @@ class BindingEditor(QWidget):
         yl.addLayout(row)
 
         layout = QVBoxLayout(self)
+        layout.setSpacing(14)
         layout.addLayout(head)
         for w in (self.when_box, self.cond_box, self.do_box, self.yaml_box):
             layout.addWidget(w)
         layout.addStretch(1)
+        # Dropdowns share a width so they line up down the cards.
+        for combo in (self.type_box, self.direction, self.mode, self.stage):
+            combo.setMinimumWidth(200)
         self.show_message("Select a binding to edit it.")
 
     # Display ---------------------------------------------------------------

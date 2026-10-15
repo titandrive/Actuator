@@ -37,7 +37,7 @@ from . import pause
 from . import versions
 from . import writer
 from . import yaml_editor
-from .widgets import Toggle
+from .widgets import CARD_STYLE, Toggle
 from . import devices as devices_mod
 from .editor import GESTURE_TYPES, BindingEditor, new_button_binding, new_gesture_binding, record_stroke
 
@@ -407,10 +407,6 @@ def github_icon(color: QColor, size: int = 16) -> QPixmap:
     painter.end()
     pixmap.setDevicePixelRatio(2)
     return pixmap
-
-
-CARD_STYLE = ("QFrame#card { background: rgba(127, 127, 127, 0.07); "
-              "border: 1px solid rgba(127, 127, 127, 0.20); border-radius: 8px; }")
 
 
 class Card(QFrame):

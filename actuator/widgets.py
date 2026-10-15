@@ -2,7 +2,7 @@
 
 from PySide6.QtCore import Property, QPropertyAnimation, QRectF, QSize, Qt, Signal
 from PySide6.QtGui import QColor, QPainter
-from PySide6.QtWidgets import QAbstractButton, QHBoxLayout, QLabel, QWidget
+from PySide6.QtWidgets import QAbstractButton, QFormLayout, QFrame, QHBoxLayout, QLabel, QVBoxLayout, QWidget
 
 
 class Toggle(QAbstractButton):
@@ -93,3 +93,42 @@ class ToggleRow(QWidget):
         super().setToolTip(text)
         self.toggle.setToolTip(text)
         self.label.setToolTip(text)
+
+
+CARD_STYLE = ("QFrame#card { background: rgba(127, 127, 127, 0.07); "
+              "border: 1px solid rgba(127, 127, 127, 0.20); border-radius: 8px; }")
+LABEL_WIDTH = 86  # one label column, shared by every editor card so rows line up across them
+
+
+class Section(QWidget):
+    """A titled, rounded card (like System Settings). Lay out its contents on .card."""
+
+    def __init__(self, title: str):
+        super().__init__()
+        self.title = QLabel(title)
+        self.title.setStyleSheet("font-weight: 600; padding: 0 2px;")
+        self.card = QFrame()
+        self.card.setObjectName("card")
+        self.card.setStyleSheet(CARD_STYLE)
+        v = QVBoxLayout(self)
+        v.setContentsMargins(0, 0, 0, 0)
+        v.setSpacing(6)
+        v.addWidget(self.title)
+        v.addWidget(self.card)
+
+
+def tidy_form(form: QFormLayout, margins: bool = True):
+    """Left-aligned labels in a fixed-width column, even spacing, controls at their natural width."""
+    form.setLabelAlignment(Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter)
+    form.setFormAlignment(Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignTop)
+    form.setFieldGrowthPolicy(QFormLayout.FieldGrowthPolicy.FieldsStayAtSizeHint)
+    form.setHorizontalSpacing(14)
+    form.setVerticalSpacing(10)
+    if margins:
+        form.setContentsMargins(14, 12, 14, 12)
+    else:
+        form.setContentsMargins(0, 0, 0, 0)
+    for i in range(form.rowCount()):
+        item = form.itemAt(i, QFormLayout.ItemRole.LabelRole)
+        if item and item.widget():
+            item.widget().setFixedWidth(LABEL_WIDTH)
