@@ -61,6 +61,9 @@ def paste(config: cfg.Config, items: list[tuple[str, dict]], scope: str, app: st
     for section, new in new_items:
         base = str(new.get("id", "binding"))
         base = next((base[len(p):] for p in prefixes if base.startswith(p)), base)
+        old_id = str(new.get("id", ""))
         new["id"] = unique_id(config, f"{slug(where)}_{base}")  # added one at a time, so ids stay unique
+        if config.labels.get(old_id):
+            config.labels[new["id"]] = config.labels[old_id]  # a copied binding keeps its label
         config.add_binding(section, new)
     return added, skipped

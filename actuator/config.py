@@ -28,6 +28,10 @@ DEVICE_TABS = {title: section for title, section in DEVICES.items() if section !
 #   # actuator:button leftshift+leftmeta+leftbrace = Wheel tilt left
 BUTTON_LINE = re.compile(r"^\s*#\s*actuator:button\s+(\S+)\s*=\s*(.+?)\s*$")
 APP_LINE = re.compile(r"^\s*#\s*actuator:app\s+(.+?)\s*$")  # app names can have spaces
+# A note is a comment right above its binding:  # Note: Opens the inventory
+# ("# Label:" is read too, from before it was called a note.)
+LABEL_LINE = re.compile(r"^\s*#\s*(?:Note|Label):\s*(.*?)\s*$")
+ID_LINE = re.compile(r"^\s*-\s*id:\s*['\"]?([^'\"\s#]+)")
 DEVICE_LINE = re.compile(r"^\s*#\s*actuator:device\s+(.+?)\s*=\s*(\w+)\s*$")
 FOLDER_ICON_LINE = re.compile(r"^\s*#\s*actuator:foldericon\s+(.+?)\s*=\s*([a-z0-9-]+)\s*$")
 FOLDER_LINE = re.compile(r"^\s*#\s*actuator:folder\s+(.+?)\s*=\s*(.*?)\s*$")
@@ -70,6 +74,7 @@ class Config:
     folders: dict[str, list[str]] = field(default_factory=dict)  # folder name -> apps, in order
     folder_icons: dict[str, str] = field(default_factory=dict)  # folder name -> Lucide icon name
     device_types: dict[str, str] = field(default_factory=dict)  # named device -> mouse/touchpad/...
+    labels: dict[str, str] = field(default_factory=dict)  # binding id -> the user's note
 
     @property
     def apps(self) -> list[str]:
@@ -153,6 +158,13 @@ class Config:
         for b in sorted(bindings, key=lambda b: (b.section, b.index), reverse=True):
             del self.data[b.section]["gestures"][b.index]
         self.reindex()
+
+    def set_label(self, binding_id: str, text: str):
+        text = " ".join(text.split())  # one line: it lives in a comment
+        if text:
+            self.labels[binding_id] = text
+        else:
+            self.labels.pop(binding_id, None)
 
     def add_button(self, src: str, name: str):
         self.button_names[src] = name
@@ -245,5 +257,16 @@ def loads(text: str, path: Path | None = None) -> Config:
             config.folder_icons[m.group(1)] = m.group(2)
         elif m := FOLDER_LINE.match(line):
             config.folders[m.group(1)] = [a.strip() for a in m.group(2).split(",") if a.strip()]
+    # Notes: a "# Note:" comment applies to the next binding (its "- id:" line).
+    pending = None
+    for line in text.splitlines():
+        if m := LABEL_LINE.match(line):
+            pending = m.group(1)
+        elif m := ID_LINE.match(line):
+            if pending:
+                config.labels[m.group(1)] = pending
+            pending = None
+        elif line.strip() and not line.lstrip().startswith("#"):
+            pending = None
     config.reindex()
     return config

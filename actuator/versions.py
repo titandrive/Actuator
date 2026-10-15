@@ -46,7 +46,7 @@ def _versions() -> list[tuple[str, Path]]:
     out = []
     for snap in writer.snapshots():
         try:
-            stamp = datetime.strptime(snap.stem.removeprefix("config-"), "%Y%m%d-%H%M%S")
+            stamp = datetime.strptime(snap.stem.removeprefix("config-")[:15], "%Y%m%d-%H%M%S")
             out.append((f"Before save at {stamp:%b %d, %H:%M:%S}", snap))
         except ValueError:
             out.append((snap.name, snap))

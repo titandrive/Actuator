@@ -953,8 +953,10 @@ class MainWindow(QMainWindow):
         QTimer.singleShot(0, self._check_installed)
         pause.recover()  # in case a previous run crashed while shortcuts were paused
         pause.inputactions_running = lambda: self.running
-        self.watcher = QFileSystemWatcher()
-        self.watcher.fileChanged.connect(lambda _p: QTimer.singleShot(300, self._file_changed))
+        self.watcher = QFileSystemWatcher(self)  # owned by the window, so it goes away with it
+        # A bound method (not a lambda) ties the delayed call to this window, so Qt drops it if the
+        # window is gone by then.
+        self.watcher.fileChanged.connect(lambda _p: QTimer.singleShot(300, self, self._file_changed))
         self.load()
 
     # Toolbar ---------------------------------------------------------------
@@ -1199,7 +1201,7 @@ class MainWindow(QMainWindow):
         self.toggle_action.setText("Stop" if self.running else "Start")
         self.toggle_action.setIcon(icons.icon(
             "media-playback-pause" if self.running else "media-playback-start"))
-        self.toggle_action.setToolTip("Pause InputActions" if self.running else "Start InputActions")
+        self.toggle_action.setToolTip("Stop InputActions" if self.running else "Start InputActions")
         self._update_status()
 
     def _update_status(self):
@@ -1527,6 +1529,7 @@ class MainWindow(QMainWindow):
 
     def closeEvent(self, event):
         if self._ask_discard("quit"):
+            self.watcher.removePaths(self.watcher.files())  # a closed window stops reacting to the file
             event.accept()
         else:
             event.ignore()
@@ -1623,7 +1626,7 @@ class MainWindow(QMainWindow):
             QItemSelectionModel.SelectionFlag.ClearAndSelect | QItemSelectionModel.SelectionFlag.Rows)
         self.sidebar.setAutoScroll(True)
         self._apply_collapsed()  # in case anything above opened a folder on its own
-        QTimer.singleShot(0, lambda: self.sidebar.setAnimated(animated))
+        QTimer.singleShot(0, self.sidebar, lambda: self.sidebar.setAnimated(animated))  # dropped if gone
 
     def _folder_toggled(self, item, expanded: bool):
         p = item.data(0, ROLE)
@@ -1857,19 +1860,42 @@ class MainWindow(QMainWindow):
             self.current = ("global", None)
         self._fill_sidebar(select)
 
+    def _wire_labels(self, page: BindingsPage):
+        """The Note column: click to type a note, Enter saves it (instantly, like a button name)."""
+        page.tree.headerItem().setToolTip(2, "Your own note for this binding. Click a cell to edit it.")
+        for item in page.rows():
+            item.setFlags(item.flags() | Qt.ItemFlag.ItemIsEditable)
+            item.setToolTip(2, "Click to add or edit a note")
+        page.tree.itemClicked.connect(lambda item, col: page.tree.editItem(item, 2) if col == 2 else None)
+        page.tree.itemChanged.connect(lambda item, col: self._label_edited(item) if col == 2 else None)
+
+    def _label_edited(self, item):
+        p = item.data(0, ROLE)
+        b = p.get("binding") if isinstance(p, dict) else None
+        if not b:
+            return
+        text = " ".join(item.text(2).split())
+        if text == self.config.labels.get(b.id, ""):
+            return
+        self.apply_now(lambda c: c.set_label(b.id, text))
+
     def _wire(self, page: BindingsPage, row_text):
         """Keep a page's rows and the dirty flag in step with its editor."""
         def changed():
+            if page.editor.config is not self.config:
+                return  # an editor from before an undo or reload: its edits belong to an old config
             self.mark_dirty()
             item = page.tree.currentItem()
             if item:
                 p = item.data(0, ROLE)
                 for col, text in enumerate(row_text(p)):
                     item.setText(col, text)
+        self._wire_labels(page)
         page.editor.show_conditions = self.feature("only_if")
         page._selected(page.tree.currentItem(), None)  # the first row was shown before this was set
         page.editor.changed.connect(changed)
-        page.editor.structure_changed.connect(lambda: self._refresh())
+        page.editor.structure_changed.connect(
+            lambda: self._refresh() if page.editor.config is self.config else None)
         page.tree.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
         page.tree.customContextMenuRequested.connect(lambda pos: self._binding_menu(page, pos))
         QShortcut(QKeySequence.StandardKey.Copy, page.tree, lambda: self._copy_binding(page.tree.currentItem()))
@@ -1904,8 +1930,10 @@ class MainWindow(QMainWindow):
             menu.addAction(icons.icon("edit-paste"), "Paste", self._paste_here)
         if menu.isEmpty():
             menu.addAction("Nothing to copy here").setEnabled(False)
-        if item and item.flags() & Qt.ItemFlag.ItemIsEditable:
+        if binding:
             menu.addSeparator()
+            menu.addAction(icons.lucide("sticky-note"), "Edit note", lambda: page.tree.editItem(item, 2))
+        if item and isinstance(p, dict) and p.get("src"):  # only button rows can be renamed
             menu.addAction(icons.icon("edit-rename"), "Rename…", lambda: page.tree.editItem(item, 0))
         if binding:
             menu.addSeparator()
@@ -1973,7 +2001,7 @@ class MainWindow(QMainWindow):
 
     def _mouse_page(self, scope, app, select=None) -> QWidget:
         where = scope_title(scope, app)
-        page = BindingsPage(["Input", "Action"], self.config)
+        page = BindingsPage(["Trigger", "Action", "Note"], self.config)
         page.tree.headerItem().setToolTip(0, "Double-click a name to rename it. Renaming only changes "
                                              "the name shown here.")
         page.tree.headerItem().setToolTip(1, f"What it does in {where}")
@@ -1986,7 +2014,8 @@ class MainWindow(QMainWindow):
             page.add_group("Buttons")
         for btn, b in bound:  # only buttons that do something here
             name = button_name(btn)
-            item = page.add_row([name, d.summary(b)], {"title": f"{name} in {where}", "binding": b, "src": btn.src})
+            item = page.add_row([name, d.summary(b), self.config.labels.get(b.id, "")],
+                                {"title": f"{name} in {where}", "binding": b, "src": btn.src})
             item.setToolTip(0, f"Sends {d.button_label(btn.src)}. Double-click or right-click to rename.")
             item.setFlags(item.flags() | Qt.ItemFlag.ItemIsEditable)
         if gestures:
@@ -1994,7 +2023,8 @@ class MainWindow(QMainWindow):
                 page.add_group("Gestures")
             for b in gestures:
                 title = d.gesture_title(b.data)
-                page.add_row([title, d.summary(b)], {"title": f"{title} in {where}", "binding": b})
+                page.add_row([title, d.summary(b), self.config.labels.get(b.id, "")],
+                             {"title": f"{title} in {where}", "binding": b})
         add = QPushButton(icons.icon("media-record"), "Add button binding")
         add.setToolTip("Press the mouse button you want to bind")
         add.clicked.connect(lambda: self.add_button(scope, app))
@@ -2062,12 +2092,13 @@ class MainWindow(QMainWindow):
 
     def _gesture_page(self, scope, app, section, select=None) -> QWidget:
         where = scope_title(scope, app)
-        page = BindingsPage(["Gesture", "Action"], self.config)
+        page = BindingsPage(["Trigger", "Action", "Note"], self.config)
         for b in self._bindings(scope, app, section):
             if b.button:  # mouse-emitted shortcuts live on the Mouse tab
                 continue
             title = d.gesture_title(b.data)
-            page.add_row([title, d.summary(b)], {"title": f"{title} in {where}", "binding": b})
+            page.add_row([title, d.summary(b), self.config.labels.get(b.id, "")],
+                         {"title": f"{title} in {where}", "binding": b})
         page.add_button(self._gesture_menu_button(section, scope, app))
         page.finish(f"No {section} bindings for {where} yet.", select)
         self._wire(page, lambda p: [d.gesture_title(p["binding"].data), d.summary(p["binding"])])

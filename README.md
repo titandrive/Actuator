@@ -104,6 +104,15 @@ Pushing runs in the background without asking for a password, so it needs creden
 own: an SSH key added to your account, or a git credential helper. Options shows whether git, the
 repository and the remote are set up.
 
+## Development
+
+Run the tests (they use their own sample config and temporary folders, and never touch your real
+config, settings or InputActions):
+
+```bash
+PYTHONPATH=. python3 -m unittest discover -s tests
+```
+
 ## License
 
 [MIT](LICENSE)

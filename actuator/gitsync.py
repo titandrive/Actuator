@@ -122,6 +122,11 @@ def readme(config: cfg.Config) -> str:
         return (" and " if mode == "all" else " or " if mode == "any" else ", none of: ").join(texts)
 
     def action(b) -> str:
+        from .editor import detect_mode
+
+        mode, values = detect_mode(b.data.get("actions"))
+        if mode == "Hold keys":
+            return f"Hold {values['keys']}"
         stages = d.stages(b.data.get("actions"))
         if not stages:
             return "Nothing"
@@ -138,12 +143,14 @@ def readme(config: cfg.Config) -> str:
             if not rows:
                 continue
             show_if = any(extra(b) for b in rows)
+            show_label = any(config.labels.get(b.id) for b in rows)
             out += [f"**{section_title}**", ""]
-            out.append("| Input | Action |" + (" Only if |" if show_if else ""))
-            out.append("|---|---|" + ("---|" if show_if else ""))
+            out.append("| Trigger | Action |" + (" Only if |" if show_if else "") + (" Note |" if show_label else ""))
+            out.append("|---|---|" + ("---|" if show_if else "") + ("---|" if show_label else ""))
             for b in rows:
                 out.append(f"| {_cell(label(b))} | {_cell(action(b))} |"
-                           + (f" {_cell(extra(b))} |" if show_if else ""))
+                           + (f" {_cell(extra(b))} |" if show_if else "")
+                           + (f" {_cell(config.labels.get(b.id, ''))} |" if show_label else ""))
             out.append("")
         return out
 

@@ -104,6 +104,8 @@ def render(config: cfg.Config) -> str:
                 out.append("")
             if b.button:
                 out.append(f"  # {names.get(b.button) or d.button_label(b.button)}")
+            if config.labels.get(b.id):
+                out.append(f"  # Note: {config.labels[b.id]}")
             out += _dump([d.plain(b.data)], "  ")
         unknown = [g for g in (body.get("gestures") or []) if not isinstance(g, dict)]
         if unknown:
@@ -163,7 +165,12 @@ def snapshot(path: Path) -> Path | None:
     if not path.exists():
         return None
     SNAPSHOT_DIR.mkdir(parents=True, exist_ok=True)
-    target = SNAPSHOT_DIR / f"config-{datetime.now():%Y%m%d-%H%M%S}.yaml"
+    stamp = f"{datetime.now():%Y%m%d-%H%M%S}"
+    target = SNAPSHOT_DIR / f"config-{stamp}.yaml"
+    n = 2
+    while target.exists():  # two in one second must not overwrite each other
+        target = SNAPSHOT_DIR / f"config-{stamp}-{n}.yaml"
+        n += 1
     shutil.copy2(path, target)
     prune()
     return target
@@ -247,6 +254,7 @@ def save(config: cfg.Config, take_snapshot: bool = True) -> Path | None:
 
 def restore(path: Path, source: Path) -> Path | None:
     """Put a backup or export in place. The current file is snapshotted first."""
+    text = Path(source).read_text()  # read before snapshotting, in case the source is a snapshot
     previous = snapshot(path)
-    write_atomic(path, Path(source).read_text())
+    write_atomic(path, text)
     return previous
