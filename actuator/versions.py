@@ -80,6 +80,7 @@ class VersionsDialog(QDialog):
         split.addWidget(self.list)
         split.addWidget(right)
         split.setSizes([240, 480])
+        self.split = split
 
         from_file = QPushButton(icons.icon("document-import"), "Restore from file…")
         from_file.clicked.connect(self._from_file)
@@ -117,6 +118,10 @@ class VersionsDialog(QDialog):
         layout.addLayout(buttons)
         self.resize(820, 520)
         self._fill()
+        # Wide enough for the version names in this font, so they aren't cut off.
+        names = self.list.sizeHintForColumn(0) + 2 * self.list.frameWidth() + \
+            self.list.verticalScrollBar().sizeHint().width() + 8
+        self.split.setSizes([names, max(self.width() - names, 360)])
 
     def _fill(self, keep: Path | None = None):
         self.list.clear()
