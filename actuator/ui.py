@@ -389,7 +389,7 @@ DEV_FEATURES = [  # (settings key, label, tooltip) — all off by default
      "Store all options in config.yaml"),
     ("git_autocommit", "Git Auto-Commit",
      "Commits config.yaml to its git repository every time Actuator changes it. "
-     f"See the <a href='{REPO_URL}#git-auto-commit-developer-mode'>README</a> for setup."),
+     f"See the <a href='{REPO_URL}#git-auto-commit'>README</a> for setup."),
 ]
 
 
@@ -562,7 +562,7 @@ class OptionsDialog(QDialog):
             rows.append(f"{ok_mark} Pushes to {html.escape(st['remote'])}" if st["remote"]
                         else f"{warn_mark} No remote to push to (only needed for pushing)")
         if not st["repo"] or not st["remote"]:
-            rows.append(f"<a href='{REPO_URL}#git-auto-commit-developer-mode'>How to set it up</a>")
+            rows.append(f"<a href='{REPO_URL}#git-auto-commit'>How to set it up</a>")
         checklist = QLabel("<br>".join(rows))
         checklist.setWordWrap(True)
         checklist.setOpenExternalLinks(True)

@@ -101,7 +101,7 @@ Options section appears in Options; Turn off hides it again.
 - **Git Auto-Commit**: commits `config.yaml` to its git repository on every change, and can push it and
   keep a generated README. See below.
 
-## Git auto-commit (developer mode)
+### Git auto-commit
 
 Actuator can commit `config.yaml` to git every time it changes the file, and optionally push it, so your
 setup is versioned and backed up. Turn it on in Options → Developer Options → Enable Git Auto-Commit, and
