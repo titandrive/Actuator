@@ -18,13 +18,14 @@ EDGE = 0.02  # pointer within 2% of a screen edge counts as "at" it
 ROW_TYPES = {
     "Window": (["is fullscreen", "is not fullscreen", "is maximized", "is not maximized"], None),
     "Window title": (["contains", "is", "matches"], "text"),
-    "Keys held": (["include", "don't include", "are none"], MODIFIERS),
+    "Modifier key": (["is held", "is not held", "none held"], MODIFIERS),
     "Pointer": (["is at top edge", "is at bottom edge", "is at left edge", "is at right edge"], None),
     "Screen": (["is", "is not"], "text"),
     "Overview": (["is open", "is closed"], None),
     "Custom": ([""], "text"),
 }
 MODES = ["all", "any", "none"]
+NO_MODIFIERS = "none held"  # the Modifier key operation that takes no key
 
 _BOOLS = {
     ("Window", "is fullscreen"): "$window_fullscreen",
@@ -33,7 +34,7 @@ _BOOLS = {
     ("Window", "is not maximized"): "!$window_maximized",
     ("Overview", "is open"): "$plasma_overview_active",
     ("Overview", "is closed"): "!$plasma_overview_active",
-    ("Keys held", "are none"): "$keyboard_modifiers == []",
+    ("Modifier key", NO_MODIFIERS): "$keyboard_modifiers == []",
 }
 _EDGES = {
     "is at top edge": f"$pointer_position_screen_percentage_y <= {EDGE}",
@@ -53,8 +54,8 @@ def to_text(row: tuple[str, str, str]) -> str:
         return _EDGES[op]
     if kind == "Window title":
         return f"$window_title {_TITLE_OPS[op]} {value}"
-    if kind == "Keys held":
-        return f"{'!' if op == "don't include" else ''}$keyboard_modifiers contains {value}"
+    if kind == "Modifier key":
+        return f"{'!' if op == 'is not held' else ''}$keyboard_modifiers contains {value}"
     if kind == "Screen":
         return f"$screen_name {'==' if op == 'is' else '!='} {value}"
     return value  # Custom: written as typed
@@ -73,7 +74,7 @@ def from_text(text: str) -> tuple[str, str, str]:
         return "Window title", op, m.group(2)
     if m := re.fullmatch(r"(!?)\$keyboard_modifiers contains (\w+)", t):
         if m.group(2) in MODIFIERS:
-            return "Keys held", "don't include" if m.group(1) else "include", m.group(2)
+            return "Modifier key", "is not held" if m.group(1) else "is held", m.group(2)
     if m := re.fullmatch(r"\$screen_name (==|!=) (.+)", t):
         return "Screen", "is" if m.group(1) == "==" else "is not", m.group(2)
     return "Custom", "", str(text)
@@ -83,7 +84,9 @@ def describe_row(row) -> str:
     kind, op, value = row
     if kind == "Custom":
         return value
-    if kind in ("Window title", "Screen", "Keys held") and op != "are none":
+    if kind == "Modifier key":
+        return "no modifier key is held" if op == NO_MODIFIERS else f"{value.capitalize()} {op}"
+    if kind in ("Window title", "Screen"):
         return f"{kind.lower()} {op} {value}"
     return f"{kind.lower()} {op}"
 

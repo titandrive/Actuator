@@ -241,7 +241,7 @@ class ConditionTests(unittest.TestCase):
     ROWS = [
         ("Window", "is fullscreen", ""), ("Window", "is not maximized", ""),
         ("Window title", "contains", "YouTube"), ("Window title", "matches", ".*Video.*"),
-        ("Keys held", "include", "ctrl"), ("Keys held", "don't include", "meta"), ("Keys held", "are none", ""),
+        ("Modifier key", "is held", "ctrl"), ("Modifier key", "is not held", "meta"), ("Modifier key", "none held", ""),
         ("Pointer", "is at top edge", ""), ("Pointer", "is at right edge", ""),
         ("Screen", "is", "eDP-1"), ("Screen", "is not", "DP-1"),
         ("Overview", "is open", ""), ("Custom", "", "$window_pid > 100"),

@@ -67,6 +67,14 @@ class GitTests(TempConfig):
         self.assertNotIn("hover", text.lower())            # pointer tab is hidden
         self.assertIn("## Device settings", text)
 
+    def test_readme_groups_apps_under_their_folders(self):
+        c = cfg.load(self.path)
+        c.move_to_folder("factorio", "Gaming")
+        headings = [l for l in gitsync.readme(c).splitlines() if l.startswith("#")]
+        self.assertLess(headings.index("## Gaming"), headings.index("### Factorio"))
+        self.assertLess(headings.index("## Uncategorized"), headings.index("### Firefox"))  # the rest
+        self.assertNotIn("## Factorio", headings)
+
     def test_links(self):
         git("remote", "set-url", "origin", "git@github.com:me/configs.git", cwd=self.dir)
         self.assertEqual(gitsync.web_url(self.dir), "https://github.com/me/configs")

@@ -162,13 +162,24 @@ def readme(config: cfg.Config) -> str:
     globals_ = config.bindings_for("global") + config.bindings_for("custom")
     if globals_:
         lines += ["## Global", ""] + table(globals_)
-    ordered = [a for f in config.folders.values() for a in f if a in config.apps]
-    ordered += [a for a in config.apps if a not in ordered]
-    for app in ordered:
-        bindings = config.bindings_for("app", app)
-        if bindings:
-            folder = config.folder_of(app)
-            lines += [f"## {apps.display_name(app)}" + (f" · {folder}" if folder else ""), ""] + table(bindings)
+    # Folders as sections with their apps under them, as in the sidebar; the rest after, under
+    # Uncategorized so every app sits at the same heading level. Without folders, apps are sections.
+    in_folders = set()
+    grouped = False
+    for folder, members in config.folders.items():
+        bound = [a for a in members if a in config.apps and config.bindings_for("app", a)]
+        in_folders.update(members)
+        if bound:
+            grouped = True
+            lines += [f"## {folder}", ""]
+            for app in bound:
+                lines += [f"### {apps.display_name(app)}", ""] + table(config.bindings_for("app", app))
+    loose = [a for a in sorted(config.apps, key=lambda a: apps.display_name(a).lower())
+             if a not in in_folders and config.bindings_for("app", a)]
+    if loose and grouped:
+        lines += ["## Uncategorized", ""]
+    for app in loose:
+        lines += [f"{'###' if grouped else '##'} {apps.display_name(app)}", ""] + table(config.bindings_for("app", app))
     rules = config.data.get("device_rules") or []
     if rules:
         lines += ["## Device settings", ""]

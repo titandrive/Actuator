@@ -597,11 +597,13 @@ class ConditionBuilder(QWidget):
                                              "Custom": "$window_pid > 1000"}.get(kind, ""))
             value_widget.textEdited.connect(lambda t, i=i: self._set(i, value=t))
             h.addWidget(value_widget, 1)
-        elif isinstance(value_kind, list) and op != "are none":
+        elif isinstance(value_kind, list) and op != conds.NO_MODIFIERS:
             value_widget = QComboBox()
-            value_widget.addItems(value_kind)
-            value_widget.setCurrentText(value or value_kind[0])
-            value_widget.currentTextChanged.connect(lambda t, i=i: self._set(i, value=t))
+            for choice in value_kind:
+                value_widget.addItem(choice.capitalize(), choice)
+            value_widget.setCurrentIndex(max(value_widget.findData(value or value_kind[0]), 0))
+            value_widget.currentIndexChanged.connect(
+                lambda _n, i=i, w=value_widget: self._set(i, value=w.currentData()))
             h.addWidget(value_widget)
         if value_widget is None or isinstance(value_widget, QComboBox):
             h.addStretch(1)
@@ -623,7 +625,12 @@ class ConditionBuilder(QWidget):
 
     def _set(self, i: int, op=None, value=None, rebuild=False):
         kind, o, v = self.rows[i]
-        self.rows[i] = (kind, op if op is not None else o, value if value is not None else v)
+        op = op if op is not None else o
+        value = value if value is not None else v
+        choices = conds.ROW_TYPES[kind][1]
+        if isinstance(choices, list) and not value and op != conds.NO_MODIFIERS:
+            value = choices[0]  # back from "none held": the key shown is the one written
+        self.rows[i] = (kind, op, value)
         self._write()
         if rebuild:
             self._build_rows()

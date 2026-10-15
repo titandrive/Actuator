@@ -159,7 +159,7 @@ class ConditionTests(AppTest):
         self.assertTrue(page.editor.cond_box.isVisibleTo(page))
         cb._add()                                            # Window is fullscreen
         cb._add()
-        cb._set_kind(1, "Keys held")                         # include ctrl
+        cb._set_kind(1, "Modifier key")                      # is held ctrl
         cb.mode.setCurrentIndex(cb.mode.findData("any"))
         APP.processEvents()
         self.assertIn("when any of", cb.summary.text())
