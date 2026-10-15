@@ -789,6 +789,23 @@ class CaptureDialog(QDialog):
         self.accept()
 
 
+class LazyTab(QWidget):
+    """A device tab whose page (with its editor) is built the first time it's shown. Building every
+    tab's page on each app switch made switching apps noticeably slow."""
+
+    def __init__(self, build):
+        super().__init__()
+        self._build = build
+        self.page = None
+        QVBoxLayout(self).setContentsMargins(0, 0, 0, 0)
+
+    def build(self):
+        if self.page is None:
+            self.page = self._build()
+            self.layout().addWidget(self.page)
+        return self.page
+
+
 class BindingsPage(QWidget):
     """A list of rows, an add bar under it, and the selected row's editor below."""
 
@@ -1846,15 +1863,27 @@ class MainWindow(QMainWindow):
         tabs = QTabWidget()
         for title, section in cfg.DEVICE_TABS.items():
             if self.tab_visible(title):
-                page = self._mouse_page(scope, app, select) if section == "mouse" else \
-                    self._gesture_page(scope, app, section, select)
-                i = tabs.addTab(page, f"{title} ({len(list(page.rows()))})")
+                build = (lambda: self._mouse_page(scope, app, select)) if section == "mouse" else \
+                    (lambda section=section: self._gesture_page(scope, app, section, select))
+                i = tabs.addTab(LazyTab(build), f"{title} ({self._tab_count(scope, app, section)})")
                 tabs.tabBar().setTabData(i, title)
         # Stay on the same device tab when switching apps, and across restarts.
         last_tab = self.settings.value("last/tab", "Mouse", type=str)
         tabs.setCurrentIndex(next((i for i in range(tabs.count()) if tabs.tabBar().tabData(i) == last_tab), 0))
-        tabs.currentChanged.connect(lambda i: self.settings.setValue("last/tab", tabs.tabBar().tabData(i)))
+        if tabs.count():
+            tabs.currentWidget().build()  # only the tab in view is built now; the rest when opened
+        tabs.currentChanged.connect(lambda i: (tabs.widget(i).build(),
+                                               self.settings.setValue("last/tab", tabs.tabBar().tabData(i))))
         self._set_page(tabs)
+
+    def _tab_count(self, scope, app, section) -> int:
+        """Rows a tab's page will list, without building it."""
+        if section == "mouse":
+            bindings = self._bindings(scope, app)
+            known = {b.src for b in self.config.buttons}
+            bound = {b.button for b in bindings if b.button in known}
+            return len(bound) + sum(1 for b in bindings if b.section == "mouse" and not b.button)
+        return sum(1 for b in self._bindings(scope, app, section) if not b.button)
 
     def _refresh(self, select=None):
         """Rebuild the current page after bindings were added, removed or moved."""

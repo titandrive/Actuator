@@ -208,7 +208,7 @@ class AppTest(TempConfig):
             if tabs.tabBar().tabData(i) == title:
                 tabs.setCurrentIndex(i)
                 APP.processEvents()
-                return tabs.widget(i)
+                return tabs.widget(i).build()
         self.fail(f"no tab {title}")
 
     def select_row(self, page, text):
