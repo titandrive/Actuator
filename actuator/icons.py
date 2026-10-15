@@ -7,10 +7,10 @@ Names that aren't mapped (an app's own icon, like "firefox") still come from the
 from functools import lru_cache
 from pathlib import Path
 
-from PySide6.QtCore import QByteArray, QRectF, QStandardPaths, Qt
+from PySide6.QtCore import QByteArray, QEvent, QObject, QRectF, QStandardPaths, Qt
 from PySide6.QtGui import QIcon, QPainter, QPalette, QPixmap
 from PySide6.QtSvg import QSvgRenderer
-from PySide6.QtWidgets import QApplication
+from PySide6.QtWidgets import QApplication, QMessageBox
 
 ICON_DIR = Path(__file__).parent / "icons"
 
@@ -90,3 +90,35 @@ def img(name: str, color: str | None = None, size: int = 14, filled: bool = Fals
     if not path.exists():
         _pixmap(name, color, size, filled).save(str(path))
     return f"<img src='{path}' width='{size}' height='{size}' style='vertical-align: middle'>"
+
+
+# Message boxes: Lucide icons in place of the theme's, which clash with everything else.
+MESSAGE_ICONS = {
+    QMessageBox.Icon.Question: ("circle-help", None),     # None: the theme's accent color
+    QMessageBox.Icon.Information: ("info", None),
+    QMessageBox.Icon.Warning: ("triangle-alert", "#e5a50a"),
+    QMessageBox.Icon.Critical: ("circle-x", "#d24545"),
+}
+
+
+class _MessageBoxIcons(QObject):
+    def eventFilter(self, obj, event):
+        if isinstance(obj, QMessageBox):
+            if not obj.testOption(QMessageBox.Option.DontUseNativeDialog):
+                # Plasma otherwise shows its own "native" box, theme icon and all, in place of
+                # this one. Set on the box's first event (its title, while being built), before
+                # Qt decides whether to go native.
+                obj.setOption(QMessageBox.Option.DontUseNativeDialog, True)
+            if event.type() == QEvent.Type.Show and obj.icon() in MESSAGE_ICONS:
+                name, color = MESSAGE_ICONS[obj.icon()]
+                color = color or obj.palette().color(QPalette.ColorRole.Highlight).name()
+                obj.setIconPixmap(_pixmap(name, color, 40))
+        return False
+
+
+_message_box_icons = _MessageBoxIcons()
+
+
+def use_lucide_message_boxes(app: QApplication):
+    """Every QMessageBox, including the static question()/warning() ones, gets a Lucide icon."""
+    app.installEventFilter(_message_box_icons)

@@ -476,7 +476,7 @@ class DeviceSettingsPage(QWidget):
         if not n:
             QMessageBox.information(self, "Actuator", "Everything is already at its defaults.")
             return
-        answer = QMessageBox.question(
+        answer = QMessageBox.warning(
             self, "Reset all device settings?",
             f"This removes all {n} device rule{'s' if n != 1 else ''}, including device-specific ones, "
             "so every device uses InputActions' defaults.\n\nIt takes effect when you save, and the "

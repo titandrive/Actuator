@@ -276,8 +276,8 @@ class YamlEditor(QDialog):
         from PySide6.QtWidgets import QMessageBox
 
         if self.text() != self.original:
-            answer = QMessageBox.question(self, "Discard changes?", "Close without saving your edits?",
-                                          QMessageBox.StandardButton.Discard | QMessageBox.StandardButton.Cancel)
+            answer = QMessageBox.warning(self, "Discard changes?", "Close without saving your edits?",
+                                         QMessageBox.StandardButton.Discard | QMessageBox.StandardButton.Cancel)
             if answer != QMessageBox.StandardButton.Discard:
                 return
         self.reject()

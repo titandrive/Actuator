@@ -210,7 +210,7 @@ class VersionsDialog(QDialog):
         is_original = path == writer.original_path(cfg.CONFIG_PATH)
         warning = ("This is your config from before you started using Actuator. "
                    if is_original else "")
-        answer = QMessageBox.question(
+        answer = QMessageBox.warning(
             self, "Delete this version?",
             f"{warning}Delete “{self.title.text()}” permanently? This can't be undone.",
             QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.Cancel,

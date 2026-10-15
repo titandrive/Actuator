@@ -1034,7 +1034,7 @@ class MainWindow(QMainWindow):
         if dialog.keep.value() != writer.SNAPSHOT_KEEP:
             dropping = len(writer.snapshots()[dialog.keep.value():])
             if dropping:
-                answer = QMessageBox.question(
+                answer = QMessageBox.warning(
                     self, "Actuator", f"Keeping {dialog.keep.value()} deletes your {dropping} oldest "
                     f"saved version{'s' if dropping != 1 else ''}. Continue?",
                     QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.Cancel,
@@ -1304,7 +1304,7 @@ class MainWindow(QMainWindow):
     def _ask_discard(self, what: str) -> bool:
         if not self.dirty:
             return True
-        answer = QMessageBox.question(
+        answer = QMessageBox.warning(
             self, "Actuator", f"You have unsaved changes. Discard them and {what}?",
             QMessageBox.StandardButton.Discard | QMessageBox.StandardButton.Cancel,
         )
@@ -1327,7 +1327,7 @@ class MainWindow(QMainWindow):
         if text == self._last_written:
             return  # our own save
         if self.dirty:
-            answer = QMessageBox.question(
+            answer = QMessageBox.warning(
                 self, "Actuator",
                 "config.yaml was changed outside Actuator.\n\n"
                 "Load the new file (your unsaved changes are lost), or keep editing yours?",
@@ -1812,7 +1812,7 @@ class MainWindow(QMainWindow):
     def remove_app(self, app: str):
         n = len(self.config.bindings_for("app", app))
         detail = f"This deletes its {n} binding{'s' if n != 1 else ''}." if n else "It has no bindings."
-        answer = QMessageBox.question(
+        answer = QMessageBox.warning(
             self, "Actuator", f"Remove {apps_mod.display_name(app)}? {detail}",
             QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.Cancel,
         )

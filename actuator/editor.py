@@ -1241,7 +1241,7 @@ class BindingEditor(QWidget):
 
     def _delete(self):
         b = self.binding
-        answer = QMessageBox.question(
+        answer = QMessageBox.warning(
             self, "Actuator", f"Delete {b.id}?\n\nNothing is written until you save.",
             QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.Cancel,
         )
