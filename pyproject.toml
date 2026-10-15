@@ -18,10 +18,10 @@ Homepage = "https://github.com/titandrive/Actuator"
 actuator = "actuator.__main__:main"
 
 [tool.setuptools]
-packages = ["actuator"]
+packages = ["actuator", "actuator.icons"]
 
 [tool.setuptools.package-data]
-actuator = ["icons/*.svg", "icons/tags.json", "icons/LICENSE"]
+"actuator.icons" = ["*.svg", "tags.json", "LICENSE"]
 
 [tool.setuptools.dynamic]
 version = { attr = "actuator.__version__" }
