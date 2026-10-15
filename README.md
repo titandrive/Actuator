@@ -78,8 +78,8 @@ layout and keeps your original as `config.yaml.original`.
 ## Developer mode
 
 Click the version number in Options ten times. Developer mode adds device settings (swipe angles,
-thresholds, timeouts), the full YAML editor, the condition builder, git auto-commit, and Store Preferences
-in Config, which keeps Actuator's options in `config.yaml` too, so restoring the config on a fresh install
+thresholds, timeouts), the full YAML editor, the condition builder, git auto-commit, and "Store all
+options in config.yaml", which keeps Actuator's options in `config.yaml` too, so restoring the config on a fresh install
 restores them as well.
 
 ## Git auto-commit (developer mode)

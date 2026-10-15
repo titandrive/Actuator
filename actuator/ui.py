@@ -385,7 +385,7 @@ class SidebarTree(QTreeWidget):
 DEV_FEATURES = [  # (settings key, label, tooltip) — all off by default
     ("yaml_editor", "Enable YAML Editor", "Adds a YAML button to the toolbar to edit config.yaml directly."),
     ("only_if", "Enable Only If Conditions", "Shows the condition builder in the binding editor."),
-    ("store_prefs", "Store Preferences in Config",
+    ("store_prefs", "Store all options in config.yaml",
      "Saves these options in config.yaml, so restoring the config on a fresh install restores them too."),
     ("git_autocommit", "Git Auto-Commit",
      "Commits config.yaml to its git repository every time Actuator changes it. "
@@ -1134,7 +1134,7 @@ class MainWindow(QMainWindow):
         self._apply_features()
 
     def _store_prefs(self):
-        """With Store Preferences in Config on, write the options into the config at once (saved,
+        """With "Store all options in config.yaml" on, write the options into the config at once (saved,
         and committed and pushed when git is set up); with it off, take them out."""
         want = self._prefs() if self.feature("store_prefs") else {}
         if self.config is not None and want != self.config.prefs:
