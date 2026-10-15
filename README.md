@@ -1,8 +1,11 @@
 # Actuator
 
-A desktop app for configuring [InputActions](https://github.com/InputActions) on KDE Plasma — mouse
-buttons, touchpad and touchscreen gestures, and the per-app actions they trigger — without editing YAML
-(unless you want to).
+A desktop app for configuring [InputActions](https://github.com/InputActions) on KDE Plasma. Set up
+mouse buttons, keyboard shortcuts, and touchpad and touchscreen gestures, globally or per app, without
+editing YAML (unless you want to).
+
+It also looks after your config file: every save is backed up, any earlier version can be restored, and
+changes can optionally be committed and pushed to git.
 
 ![Actuator's main window: apps in the sidebar, Firefox's mouse bindings, and the binding editor](docs/screenshots/main.png)
 
@@ -125,6 +128,12 @@ config, settings or InputActions):
 ```bash
 PYTHONPATH=. python3 -m unittest discover -s tests
 ```
+
+## How it was made
+
+Actuator was vibe coded: written with an AI coding assistant (Claude), with a person directing the
+design, testing it on real hardware and reviewing the changes. It has an automated test suite, but expect
+rough edges, and please open an issue if you hit one.
 
 ## License
 
