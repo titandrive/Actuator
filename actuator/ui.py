@@ -8,7 +8,7 @@ from datetime import date, datetime
 from pathlib import Path
 
 from PySide6.QtCore import (
-    Property, QFileSystemWatcher, QItemSelectionModel, QPoint, QPropertyAnimation, QRectF, QSettings, QSize, Qt, QTimer, QUrl, Signal,
+    Property, QEvent, QFileSystemWatcher, QItemSelectionModel, QPoint, QPropertyAnimation, QRectF, QSettings, QSize, Qt, QTimer, QUrl, Signal,
 )
 from PySide6.QtGui import (
     QColor, QDesktopServices, QFontDatabase, QIcon, QKeySequence, QPainter, QPen, QPixmap, QShortcut,
@@ -17,7 +17,7 @@ from PySide6.QtWidgets import (
     QAbstractButton, QApplication, QDialog, QTextBrowser, QListWidget, QListWidgetItem, QToolTip, QFormLayout, QSpinBox, QDialogButtonBox, QFileDialog, QFrame, QGridLayout, QHBoxLayout,
     QComboBox, QGroupBox, QInputDialog, QLabel, QLineEdit, QMainWindow, QMenu,
     QMessageBox, QPushButton, QScrollArea, QSizePolicy,
-    QSplitter, QStackedWidget, QTabWidget, QToolBar, QToolButton, QTreeWidget,
+    QSplitter, QStackedWidget, QStyledItemDelegate, QTabWidget, QToolBar, QToolButton, QTreeWidget,
     QTreeWidgetItem, QVBoxLayout, QWidget,
 )
 from PySide6.QtSvg import QSvgRenderer
@@ -810,6 +810,23 @@ class LazyTab(QWidget):
             self.page = self._build()
             self.layout().addWidget(self.page)
         return self.page
+
+
+class NoteDelegate(QStyledItemDelegate):
+    """The Note cell's editor starts with all its text selected, and a double-click selects all
+    too. A click opens the editor, so a double-click otherwise lands in it and picks one word."""
+
+    def createEditor(self, parent, option, index):
+        editor = super().createEditor(parent, option, index)
+        editor.installEventFilter(self)
+        QTimer.singleShot(0, editor, editor.selectAll)
+        return editor
+
+    def eventFilter(self, obj, event):
+        if event.type() == QEvent.Type.MouseButtonDblClick and isinstance(obj, QLineEdit):
+            obj.selectAll()
+            return True
+        return super().eventFilter(obj, event)
 
 
 class BindingsPage(QWidget):
@@ -1989,6 +2006,7 @@ class MainWindow(QMainWindow):
         for item in page.rows():
             item.setFlags(item.flags() | Qt.ItemFlag.ItemIsEditable)
             item.setToolTip(2, "Click to add or edit a note")
+        page.tree.setItemDelegateForColumn(2, NoteDelegate(page.tree))
         page.tree.itemClicked.connect(lambda item, col: page.tree.editItem(item, 2) if col == 2 else None)
         page.tree.itemChanged.connect(lambda item, col: self._label_edited(item) if col == 2 else None)
 

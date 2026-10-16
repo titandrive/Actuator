@@ -6,7 +6,7 @@ from PySide6.QtCore import QProcess, Qt, Signal
 from PySide6.QtGui import QFontDatabase, QIcon
 from PySide6.QtWidgets import (
     QSizePolicy,
-    QComboBox, QDialog, QDialogButtonBox, QDoubleSpinBox, QFormLayout, QGroupBox, QHBoxLayout, QLabel, QLineEdit,
+    QAbstractSpinBox, QComboBox, QDialog, QDialogButtonBox, QDoubleSpinBox, QFormLayout, QGroupBox, QHBoxLayout, QLabel, QLineEdit,
     QMessageBox, QPlainTextEdit, QPushButton, QSpinBox, QStackedWidget, QToolButton, QTreeWidget,
     QTreeWidgetItem, QVBoxLayout, QWidget,
 )
@@ -20,7 +20,7 @@ from . import describe as d
 from . import devices
 from . import keys
 from . import pause
-from .widgets import Section, ToggleRow, WrapLabel, label_width, tidy_form
+from .widgets import Section, ToggleRow, WrapLabel, label_width, scroll_past, tidy_form
 
 # Trigger types each device section supports.
 GESTURE_TYPES = {
@@ -584,6 +584,7 @@ class ConditionBuilder(QWidget):
         h = QHBoxLayout(w)
         h.setContentsMargins(0, 0, 0, 0)
         kind_box = QComboBox()
+        scroll_past(kind_box)
         kind_box.addItems(list(conds.ROW_TYPES))
         kind_box.setCurrentText(kind)
         ops, value_kind = conds.ROW_TYPES[kind]
@@ -591,6 +592,7 @@ class ConditionBuilder(QWidget):
         op_box = None
         if kind != "Custom":
             op_box = QComboBox()
+            scroll_past(op_box)
             op_box.addItems(ops)
             op_box.setCurrentText(op)
             h.addWidget(op_box)
@@ -603,6 +605,7 @@ class ConditionBuilder(QWidget):
             h.addWidget(value_widget, 1)
         elif isinstance(value_kind, list) and op != conds.NO_MODIFIERS:
             value_widget = QComboBox()
+            scroll_past(value_widget)
             for choice in value_kind:
                 value_widget.addItem(choice.capitalize(), choice)
             value_widget.setCurrentIndex(max(value_widget.findData(value or value_kind[0]), 0))
@@ -902,6 +905,7 @@ class BindingEditor(QWidget):
         for combo in (self.type_box, self.direction, self.mode, self.stage, self.hold_button, self.speed,
                       self.click_button):
             combo.setMinimumWidth(200)
+        scroll_past(*self.findChildren(QComboBox), *self.findChildren(QAbstractSpinBox))
         self.show_message("Select a binding to edit it.")
 
     # Display ---------------------------------------------------------------

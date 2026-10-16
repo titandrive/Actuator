@@ -1,9 +1,10 @@
 """Small shared widgets."""
 
-from PySide6.QtCore import Property, QPropertyAnimation, QRect, QRectF, QSize, Qt, Signal
+from PySide6.QtCore import Property, QEvent, QObject, QPropertyAnimation, QRect, QRectF, QSize, Qt, Signal
 from PySide6.QtGui import QColor, QPainter
 from PySide6.QtWidgets import (
-    QAbstractButton, QFormLayout, QFrame, QHBoxLayout, QLabel, QSizePolicy, QVBoxLayout, QWidget,
+    QAbstractButton, QAbstractScrollArea, QApplication, QFormLayout, QFrame, QHBoxLayout, QLabel, QSizePolicy,
+    QVBoxLayout, QWidget,
 )
 
 
@@ -147,6 +148,31 @@ class WrapLabel(QLabel):
             height = self._text_height(self.width())
             if height != self.minimumHeight():
                 self.setMinimumHeight(height)
+
+
+class _WheelToPage(QObject):
+    """Sends the scroll wheel past a dropdown or number box to the page it's on, so scrolling
+    through a form never changes a value by accident."""
+
+    def eventFilter(self, obj, event):
+        if event.type() == QEvent.Type.Wheel:
+            area = obj.parent()
+            while area is not None and not isinstance(area, QAbstractScrollArea):
+                area = area.parent()
+            if area is not None:
+                QApplication.sendEvent(area.viewport(), event)
+            return True  # never the value's
+        return False
+
+
+_wheel_to_page = _WheelToPage()
+
+
+def scroll_past(*widgets: QWidget):
+    """Make these widgets ignore the scroll wheel, scrolling their page instead."""
+    for w in widgets:
+        w.setFocusPolicy(Qt.FocusPolicy.StrongFocus)  # no focus (or value change) from the wheel
+        w.installEventFilter(_wheel_to_page)
 
 
 class Section(QWidget):
