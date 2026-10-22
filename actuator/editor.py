@@ -2,11 +2,11 @@
 
 import re
 
-from PySide6.QtCore import QEvent, QProcess, Qt, Signal
+from PySide6.QtCore import QEvent, QPoint, QProcess, QRect, QSize, Qt, Signal
 from PySide6.QtGui import QFontDatabase, QIcon
 from PySide6.QtWidgets import (
     QSizePolicy,
-    QAbstractSpinBox, QComboBox, QDialog, QDialogButtonBox, QDoubleSpinBox, QFormLayout, QGroupBox, QHBoxLayout, QLabel, QLineEdit,
+    QAbstractSpinBox, QComboBox, QDialog, QDialogButtonBox, QDoubleSpinBox, QFormLayout, QFrame, QGroupBox, QHBoxLayout, QLabel, QLayout, QLineEdit,
     QMessageBox, QPlainTextEdit, QPushButton, QSpinBox, QStackedWidget, QToolButton, QTreeWidget,
     QTreeWidgetItem, QVBoxLayout, QWidget,
 )
@@ -294,6 +294,106 @@ class KeyField(QLineEdit):
         self._lone = None
 
 
+class FlowLayout(QLayout):
+    """Lays widgets out in rows, wrapping to the next row when one is full."""
+
+    def __init__(self, parent=None, spacing: int = 6):
+        super().__init__(parent)
+        self._items = []
+        self._spacing = spacing
+
+    def addItem(self, item):
+        self._items.append(item)
+
+    def count(self):
+        return len(self._items)
+
+    def itemAt(self, i):
+        return self._items[i] if 0 <= i < len(self._items) else None
+
+    def takeAt(self, i):
+        return self._items.pop(i) if 0 <= i < len(self._items) else None
+
+    def hasHeightForWidth(self):
+        return True
+
+    def heightForWidth(self, width):
+        return self._place(QRect(0, 0, width, 0), move=False)
+
+    def setGeometry(self, rect):
+        super().setGeometry(rect)
+        self._place(rect, move=True)
+
+    def sizeHint(self):
+        return self.minimumSize()
+
+    def minimumSize(self):
+        size = QSize()
+        for item in self._items:
+            size = size.expandedTo(item.minimumSize())
+        m = self.contentsMargins()
+        return size + QSize(m.left() + m.right(), m.top() + m.bottom())
+
+    def _place(self, rect, move: bool) -> int:
+        m = self.contentsMargins()
+        x, y, row = rect.x() + m.left(), rect.y() + m.top(), 0
+        right = rect.right() - m.right()
+        for item in self._items:
+            size = item.sizeHint()
+            if x + size.width() > right and x > rect.x() + m.left():
+                x, y, row = rect.x() + m.left(), y + row + self._spacing, 0
+            if move:
+                item.setGeometry(QRect(QPoint(x, y), size))
+            x += size.width() + self._spacing
+            row = max(row, size.height())
+        return y + row - rect.y() + m.bottom()
+
+
+class KeyCaps(QFrame):
+    """The combo being built, shown as key caps (Ctrl + T, then Ctrl + V) on a tinted panel, so it
+    reads as the result rather than a box to type in. text() is the same text the key field takes."""
+
+    def __init__(self, text: str = ""):
+        super().__init__()
+        self.setObjectName("caps")
+        self.setStyleSheet("QFrame#caps { background: palette(base); border: 1px solid palette(mid);"
+                           " border-radius: 8px; }")
+        self.flow = FlowLayout(self)
+        self.flow.setContentsMargins(12, 10, 12, 10)
+        self._text = ""
+        self.setText(text)
+
+    def text(self) -> str:
+        return self._text
+
+    def clear(self):
+        self.setText("")
+
+    def setText(self, text: str):
+        self._text = text
+        while (item := self.flow.takeAt(0)) is not None:
+            item.widget().deleteLater()
+        combos = text.split(",")
+        if not text.strip():
+            self._add(QLabel("Click keys below"), muted=True)
+        for n, combo in enumerate(combos):
+            if n:
+                self._add(QLabel("then"), muted=True)
+            for i, key in enumerate(k for k in combo.strip().split("+") if k):
+                if i:
+                    self._add(QLabel("+"), muted=True)
+                cap = QLabel(key)
+                cap.setStyleSheet("QLabel { border: 1px solid palette(mid); border-bottom: 3px solid palette(mid);"
+                                  " border-radius: 5px; padding: 2px 8px; background: palette(button); font-weight: 600; }")
+                self._add(cap)
+        self.updateGeometry()
+
+    def _add(self, label: QLabel, muted: bool = False):
+        if muted:
+            label.setStyleSheet("color: palette(placeholder-text); padding-top: 3px;")
+        self.flow.addWidget(label)
+
+
 class KeyList(QDialog):
     """Every key name you can type. Click keys to build a combo, then Save."""
 
@@ -301,9 +401,9 @@ class KeyList(QDialog):
         super().__init__(parent)
         self.field = field
         self.setWindowTitle("Keys")
-        self.preview = QLineEdit(field.text())
-        self.preview.setPlaceholderText("Click keys below")
+        self.preview = KeyCaps(field.text())
         self.search = QLineEdit(placeholderText="Search keys")
+        self.search.setClearButtonEnabled(True)
         self.search.textChanged.connect(self._filter)
         self.tree = QTreeWidget()
         self.tree.setHeaderLabels(["Key", "Name in config"])
@@ -330,8 +430,8 @@ class KeyList(QDialog):
         tools.addWidget(self.then_button)
         tools.addWidget(clear)
         tools.addStretch(1)
-        hint = QLabel("Click keys to build a combo: Ctrl, then T makes Ctrl+T."
-                      + ("" if field.single else " Use Then… to add another combo after it."))
+        hint = QLabel("Click keys to add them: Ctrl, then T makes Ctrl+T."
+                      + ("" if field.single else " Then… starts the next combo."))
         hint.setWordWrap(True)
         hint.setStyleSheet("color: palette(placeholder-text);")
         self.error = QLabel()
@@ -340,10 +440,10 @@ class KeyList(QDialog):
         buttons.accepted.connect(self._save)
         buttons.rejected.connect(self.reject)
         layout = QVBoxLayout(self)
+        layout.addWidget(self.search)
+        layout.addWidget(self.tree, 1)
         layout.addWidget(self.preview)
         layout.addLayout(tools)
-        layout.addWidget(self.search)
-        layout.addWidget(self.tree)
         layout.addWidget(hint)
         layout.addWidget(self.error)
         layout.addWidget(buttons)
