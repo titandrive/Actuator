@@ -1100,6 +1100,9 @@ class MainWindow(QMainWindow):
         bar.widgetForAction(self.toggle_action).setToolButtonStyle(Qt.ToolButtonStyle.ToolButtonTextBesideIcon)
         self.issues_label = QLabel()  # only shown when InputActions reports a problem
         self.issues_action = bar.addWidget(self.issues_label)  # toolbar widgets hide via their action
+        # Clicking a problem shown here explains it again.
+        for label in (self.status, self.issues_label):
+            label.installEventFilter(self)
         spacer = QWidget()
         spacer.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Preferred)
         bar.addWidget(spacer)
@@ -1414,11 +1417,29 @@ class MainWindow(QMainWindow):
         self.issues_action.setVisible(bool(self._issues))  # only worth showing when something's wrong
         self.issues_label.setText(f"{icons.img('triangle-alert', '#d24545')} "
                                   "<span style='color:#d24545'>Config issues</span>")
-        self.issues_label.setToolTip(self._issues)
+        self.issues_label.setToolTip("Click to see what InputActions reports")
+        self.issues_label.setCursor(Qt.CursorShape.PointingHandCursor)
+        problem = self.rebuild and not self.loaded  # "Needs rebuild" can be clicked for how to fix it
+        self.status.setCursor(Qt.CursorShape.PointingHandCursor if problem else Qt.CursorShape.ArrowCursor)
+        self.status.setToolTip("Click to see how to fix it" if problem else "")
         self.save_button.setEnabled(self.dirty and getattr(self, "broken", None) is None)
         self.save_button.setToolTip("Save binding changes and reload InputActions (Ctrl+S)" if self.dirty
                                     else "Nothing to save")
         self.setWindowTitle(("* " if self.dirty else "") + "Actuator")
+
+    def eventFilter(self, obj, event):
+        if event.type() == QEvent.Type.MouseButtonRelease and event.button() == Qt.MouseButton.LeftButton:
+            if obj is self.issues_label and self._issues:
+                self._show_issues()
+                return True
+            if obj is self.status and self.rebuild and not self.loaded:
+                self._explain_rebuild()
+                return True
+        return super().eventFilter(obj, event)
+
+    def _show_issues(self):
+        QMessageBox.warning(self, "Config issues",
+                            f"InputActions reports problems with your config:\n\n{self._issues}")
 
     def _check_issues(self):
         ok, out = run_ctl("config", "issues")

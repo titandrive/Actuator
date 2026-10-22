@@ -324,6 +324,18 @@ class RebuildTests(AppTest):
         self.w.toggle_running()                               # Start explains instead of trying
         self.assertEqual(shown, [True])
 
+    def test_clicking_the_problem_explains_it(self):
+        from PySide6.QtTest import QTest
+        shown = []
+        self.w.loaded, self.w.suspended, self.w.rebuild = False, False, ("6.8.0", "6.8.1")
+        self.w._explain_rebuild = lambda: shown.append("rebuild")
+        self.w._show_issues = lambda: shown.append("issues")
+        self.w._issues = "206:7: error: something"
+        self.w._update_status()
+        QTest.mouseClick(self.w.status, Qt.MouseButton.LeftButton)
+        QTest.mouseClick(self.w.issues_label, Qt.MouseButton.LeftButton)
+        self.assertEqual(shown, ["rebuild", "issues"])
+
     def test_detects_version_mismatch(self):
         import tempfile
         from pathlib import Path
