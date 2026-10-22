@@ -38,7 +38,7 @@ from . import pause
 from . import versions
 from . import writer
 from . import yaml_editor
-from .widgets import CARD_STYLE, Toggle, WrapLabel
+from .widgets import CARD_STYLE, Toggle
 from . import devices as devices_mod
 from .editor import (
     GESTURE_TYPES, BindingEditor, new_button_binding, new_gesture_binding, new_shortcut_binding,
@@ -727,6 +727,7 @@ class CaptureDialog(QDialog):
         title.setStyleSheet("font-weight: 600;")
         note = QLabel("Plasma shortcuts are paused while this is open.")
         note.setStyleSheet("color: palette(placeholder-text); font-size: 9pt;")
+        self.note = note  # also where a left/right click is asked to be confirmed, so nothing resizes
         words = QVBoxLayout()
         words.setSpacing(2)
         words.addWidget(title)
@@ -736,12 +737,8 @@ class CaptureDialog(QDialog):
         pl.setSpacing(12)
         pl.addWidget(dot, 0, Qt.AlignmentFlag.AlignVCenter)
         pl.addLayout(words, 1)
-        self.found = WrapLabel()  # grows to fit, instead of spilling over the box above it
-        self.found.hide()  # until there's something to say
         layout = QVBoxLayout(self)
-        layout.setSizeConstraint(QLayout.SizeConstraint.SetMinimumSize)  # room for the message when it appears
         layout.addWidget(self.prompt)
-        layout.addWidget(self.found)
         if known:
             layout.addWidget(QLabel("Or pick one you've used before:"))
             row = QHBoxLayout()
@@ -793,9 +790,9 @@ class CaptureDialog(QDialog):
                         self._done(name, "mouse")
                     else:
                         self._left_right = name
-                        self.found.setText(f"Are you sure you want to bind {name.capitalize()} click? "
-                                           "Click again to confirm.")
-                        self.found.show()
+                        self.note.setText(f"Are you sure you want to bind {name.capitalize()} click? "
+                                          "Click again to confirm.")
+                        self.note.setStyleSheet("color: #d24545; font-size: 9pt;")
                 else:
                     self._done(name or f"button{int(event.button())}", "mouse")
                 return True
