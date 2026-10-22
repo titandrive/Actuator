@@ -1,7 +1,7 @@
 # Maintainer: titandrive <240087026+titandrive@users.noreply.github.com>
 
 pkgname=actuator
-pkgver=0.1.6
+pkgver=0.1.7
 pkgrel=1
 pkgdesc="A GUI for configuring InputActions mouse, touchpad, touchscreen and keyboard bindings on KDE Plasma"
 arch=('any')
@@ -19,7 +19,7 @@ depends=(
 makedepends=('python-build' 'python-installer' 'python-setuptools' 'python-wheel')
 optdepends=('git: auto-commit your config (developer mode)')
 source=("$pkgname-$pkgver.tar.gz::$url/archive/refs/tags/v$pkgver.tar.gz")
-sha256sums=('1e094463af2bbed58a4894f24b283667171d33463893debcee54e753707006e9')
+sha256sums=('a50df28a22d4978a058486221e5af748c17a323b37f23a408856c4dc5d9eba19')
 
 build() {
   cd "Actuator-$pkgver"
