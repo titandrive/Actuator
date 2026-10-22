@@ -38,7 +38,7 @@ from . import pause
 from . import versions
 from . import writer
 from . import yaml_editor
-from .widgets import CARD_STYLE, Toggle
+from .widgets import CARD_STYLE, CommandBox, Toggle
 from . import devices as devices_mod
 from .editor import (
     GESTURE_TYPES, BindingEditor, new_button_binding, new_gesture_binding, new_shortcut_binding,
@@ -106,6 +106,39 @@ def set_starts_at_login(on: bool) -> tuple[bool, str]:
 def effect_loaded() -> bool:
     ok, out = run("qdbus6", "org.kde.KWin", "/Effects", "isEffectLoaded", EFFECT)
     return ok and out.strip() == "true"
+
+
+# KWin only loads a plugin built for its exact version; the version is stamped into the plugin.
+PLUGIN_FILES = ("/usr/lib/qt6/plugins/kwin/effects/plugins/kwin_gestures.so",
+                "/usr/lib64/qt6/plugins/kwin/effects/plugins/kwin_gestures.so",
+                "/usr/lib/*/qt6/plugins/kwin/effects/plugins/kwin_gestures.so",
+                "~/.local/lib*/qt6/plugins/kwin/effects/plugins/kwin_gestures.so")
+
+
+def needs_rebuild() -> tuple[str, str] | None:
+    """(KWin version InputActions was built for, KWin version running) when they differ, which
+    happens after every Plasma update until InputActions is rebuilt. None if they match or can't
+    be told."""
+    import glob
+    files = [f for pattern in PLUGIN_FILES for f in glob.glob(str(Path(pattern).expanduser()))]
+    if not files:
+        return None
+    try:
+        built = re.search(rb"org\.kde\.kwin\.EffectPluginFactory(\d+(?:\.\d+)+)", Path(files[0]).read_bytes())
+    except OSError:
+        return None
+    ok, out = run("kwin_wayland", "--version")
+    running = re.search(r"(\d+(?:\.\d+)+)", out) if ok else None
+    if not built or not running or built.group(1).decode() == running.group(1):
+        return None
+    return built.group(1).decode(), running.group(1)
+
+
+def rebuild_command() -> str | None:
+    """How to rebuild InputActions here, if there's an AUR helper that can."""
+    if shutil.which("paru"):
+        return "paru -S --rebuild inputactions-kwin"
+    return None
 
 
 def load_effect() -> tuple[bool, str]:
@@ -956,6 +989,7 @@ class MainWindow(QMainWindow):
         if login_setting() == "":
             set_starts_at_login(True)  # Actuator's default: start with Plasma
         self.loaded = effect_loaded()  # real state, from KWin
+        self.rebuild = None if self.loaded else needs_rebuild()  # built for an older KWin
         # InputActions can't report whether it's paused, so remember pausing it ourselves. KWin
         # restarts with every login, which unpauses it, so the memory only counts for the same KWin.
         self.suspended = self.loaded and bool(kwin_pid()) and \
@@ -1039,6 +1073,8 @@ class MainWindow(QMainWindow):
         self._apply_features()
         QTimer.singleShot(0, self._warn_system_config)
         QTimer.singleShot(0, self._check_installed)
+        if self.rebuild:
+            QTimer.singleShot(0, self._explain_rebuild)
         pause.recover()  # in case a previous run crashed while shortcuts were paused
         pause.inputactions_running = lambda: self.running
         self.watcher = QFileSystemWatcher(self)  # owned by the window, so it goes away with it
@@ -1195,6 +1231,39 @@ class MainWindow(QMainWindow):
         if self.config is not None and want != self.config.prefs:
             self.apply_now(lambda c: setattr(c, "prefs", dict(want)))
 
+    def _explain_rebuild(self):
+        built, running = self.rebuild
+        command = rebuild_command()
+        dialog = QDialog(self)
+        dialog.setWindowTitle("InputActions needs rebuilding")
+        icon = QLabel()
+        icon.setPixmap(icons.lucide("triangle-alert", "#c58a00").pixmap(32, 32))
+        text = QLabel(f"KWin was updated to {running}, but InputActions was built for {built}, so KWin won't "
+                      "load it and your bindings aren't working. This happens after Plasma updates."
+                      + ("\n\nRebuild it, then log out and back in:" if command else
+                         "\n\nRebuild or reinstall InputActions (inputactions-kwin) for this version of KWin, "
+                         "then log out and back in."))
+        text.setWordWrap(True)
+        text.setFixedWidth(420)
+        top = QHBoxLayout()
+        top.addWidget(icon, 0, Qt.AlignmentFlag.AlignTop)
+        top.addWidget(text, 1)
+        layout = QVBoxLayout(dialog)
+        layout.setContentsMargins(20, 18, 20, 16)
+        layout.setSpacing(12)
+        layout.setSizeConstraint(QLayout.SizeConstraint.SetFixedSize)
+        layout.addLayout(top)
+        if command:
+            layout.addWidget(CommandBox(command, 420 + 32 + 12))  # as wide as the icon and text above
+        buttons = QHBoxLayout()
+        buttons.addStretch(1)
+        close = QPushButton("Close")
+        close.setDefault(True)
+        close.clicked.connect(dialog.accept)
+        buttons.addWidget(close)
+        layout.addLayout(buttons)
+        dialog.exec()
+
     def _check_installed(self):
         if shutil.which("inputactions"):
             return
@@ -1339,7 +1408,7 @@ class MainWindow(QMainWindow):
 
     def _update_status(self):
         word, color = (("Running", "#2e9e5b") if self.running else ("Stopped", "#c58a00") if self.loaded
-                       else ("Not loaded", "#c58a00"))
+                       else ("Needs rebuild", "#d24545") if self.rebuild else ("Not loaded", "#c58a00"))
         state = f"{icons.img('circle', color, 10, filled=True)} <span style='color:{color}'>{word}</span>"
         self.status.setText(f"<b>InputActions</b> &nbsp; {state}")
         self.issues_action.setVisible(bool(self._issues))  # only worth showing when something's wrong
@@ -1419,6 +1488,9 @@ class MainWindow(QMainWindow):
                 self.settings.setValue("suspended_kwin_pid", kwin_pid())
         else:
             ok, out = True, ""
+            if not self.loaded and self.rebuild:
+                self._explain_rebuild()  # it can't load until it's rebuilt for this KWin
+                return
             if not self.loaded:
                 ok, out = load_effect()
                 self.loaded = effect_loaded()

@@ -314,6 +314,30 @@ class OptionsAndDevicesTests(AppTest):
         self.assertNotIn("Touchscreen", [tabs.tabBar().tabData(i) for i in range(tabs.count())])
 
 
+class RebuildTests(AppTest):
+    def test_status_and_start_explain_a_needed_rebuild(self):
+        shown = []
+        self.w.loaded, self.w.suspended, self.w.rebuild = False, False, ("6.8.0", "6.8.1")
+        self.w._explain_rebuild = lambda: shown.append(True)
+        self.w._update_status()
+        self.assertIn("Needs rebuild", self.w.status.text())
+        self.w.toggle_running()                               # Start explains instead of trying
+        self.assertEqual(shown, [True])
+
+    def test_detects_version_mismatch(self):
+        import tempfile
+        from pathlib import Path
+        with tempfile.TemporaryDirectory() as tmp:
+            plugin = Path(tmp) / "kwin_gestures.so"
+            plugin.write_bytes(b"\0junk org.kde.kwin.EffectPluginFactory6.8.0\0more")
+            self.patch_attr(self.ui, "PLUGIN_FILES", (str(plugin),))
+            self.patch_attr(self.ui, "needs_rebuild", self.real_needs_rebuild)
+            self.patch_attr(self.ui, "run", lambda *a: (True, "kwin 6.8.1"))
+            self.assertEqual(self.ui.needs_rebuild(), ("6.8.0", "6.8.1"))
+            self.patch_attr(self.ui, "run", lambda *a: (True, "kwin 6.8.0"))
+            self.assertIsNone(self.ui.needs_rebuild())
+
+
 class StoredPreferencesTests(AppTest):
     def test_options_saved_in_config_and_restored_from_it(self):
         self.w.settings.setValue("dev_mode", True)

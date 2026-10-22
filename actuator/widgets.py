@@ -175,6 +175,44 @@ def scroll_past(*widgets: QWidget):
         w.installEventFilter(_wheel_to_page)
 
 
+class CommandBox(QFrame):
+    """A command to run, in a box with a small copy button inside it (like a code block)."""
+
+    def __init__(self, command: str, width: int):
+        from PySide6.QtGui import QFontDatabase, QGuiApplication
+        from PySide6.QtCore import QTimer
+        from PySide6.QtWidgets import QToolButton
+        from . import icons
+
+        super().__init__()
+        self.setObjectName("cmd")
+        self.setStyleSheet("QFrame#cmd { background: palette(base); border: 1px solid palette(mid);"
+                           " border-radius: 6px; }")
+        self.setFixedWidth(width)
+        text = QLabel(command)
+        text.setWordWrap(True)
+        text.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
+        text.setFont(QFontDatabase.systemFont(QFontDatabase.SystemFont.FixedFont))
+        copy = QToolButton()
+        copy.setAutoRaise(True)
+        copy.setIcon(icons.icon("edit-copy"))
+        copy.setToolTip("Copy")
+        copy.setCursor(Qt.CursorShape.PointingHandCursor)
+
+        def copied():
+            QGuiApplication.clipboard().setText(command)
+            copy.setIcon(icons.lucide("check"))
+            copy.setToolTip("Copied")
+            QTimer.singleShot(1500, copy, lambda: (copy.setIcon(icons.icon("edit-copy")), copy.setToolTip("Copy")))
+        copy.clicked.connect(copied)
+        row = QHBoxLayout(self)
+        row.setContentsMargins(10, 6, 4, 6)
+        row.addWidget(text, 1)
+        row.addWidget(copy, 0, Qt.AlignmentFlag.AlignTop)
+        # A set width gives the wrapped text its true height (the copy button takes its share).
+        text.setFixedWidth(width - 10 - 4 - copy.sizeHint().width() - row.spacing() - 2)
+
+
 class Section(QWidget):
     """A titled, rounded card (like System Settings). Lay out its contents on .card."""
 

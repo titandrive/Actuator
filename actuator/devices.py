@@ -6,7 +6,7 @@ import subprocess
 from dataclasses import dataclass
 
 from PySide6.QtCore import Qt, QUrl, Signal
-from PySide6.QtGui import QDesktopServices, QFontDatabase, QGuiApplication, QIcon
+from PySide6.QtGui import QDesktopServices, QIcon
 from PySide6.QtWidgets import (
     QDialog, QDialogButtonBox, QFrame, QHBoxLayout, QLabel, QLineEdit, QMessageBox,
     QPlainTextEdit, QPushButton, QScrollArea, QSlider, QSplitter, QToolButton,
@@ -17,7 +17,7 @@ from ruamel.yaml import YAML
 from . import icons
 from . import config as cfg
 from . import describe as d
-from .widgets import Toggle
+from .widgets import CommandBox, Toggle
 
 TYPES = {  # key → (label, icon)
     "mouse": ("Mouse", "input-mouse"),
@@ -242,26 +242,13 @@ def touchpad_access_dialog(parent):
     text = QLabel("Touchpad clicks and taps only work once InputActions can read your touchpad "
                   "directly. That takes one command, then logging out and back in:")
     text.setWordWrap(True)
-    # A selectable label: it wraps and grows to fit, so the whole command is always in view.
-    command = QLabel(TOUCHPAD_RULE_COMMAND)
-    command.setWordWrap(True)
-    command.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
-    command.setFont(QFontDatabase.systemFont(QFontDatabase.SystemFont.FixedFont))
-    command.setFrameShape(QFrame.Shape.StyledPanel)
-    command.setMargin(8)
-    command.setStyleSheet("QLabel { background: palette(base); border-radius: 4px; }")
-    copy = QPushButton(icons.icon("edit-copy"), "Copy")
-    copy.clicked.connect(lambda: (QGuiApplication.clipboard().setText(TOUCHPAD_RULE_COMMAND),
-                                  copy.setText("Copied")))
-    row = QHBoxLayout()
-    row.addWidget(command, 1)
-    row.addWidget(copy, 0, Qt.AlignmentFlag.AlignTop)
+    command = CommandBox(TOUCHPAD_RULE_COMMAND, 480)  # the dialog's width less its margins
     docs = QPushButton(icons.lucide("book-open"), "Open docs")
     docs.clicked.connect(lambda: QDesktopServices.openUrl(QUrl(TOUCHPAD_DOCS_URL)))
     close = QPushButton("Close")
     close.setDefault(True)
     close.clicked.connect(dialog.accept)
-    buttons = QHBoxLayout()
+    buttons = QHBoxLayout()  # one row: Open docs on the left, Close on the right
     buttons.addWidget(docs)
     buttons.addStretch(1)
     buttons.addWidget(close)
@@ -270,7 +257,7 @@ def touchpad_access_dialog(parent):
     top.addWidget(text, 1)
     layout = QVBoxLayout(dialog)
     layout.addLayout(top)
-    layout.addLayout(row)
+    layout.addWidget(command)
     layout.addLayout(buttons)
     layout.setContentsMargins(20, 18, 20, 16)
     layout.setSpacing(12)

@@ -149,8 +149,12 @@ class AppTest(TempConfig):
             self._patches.append((obj, name, getattr(obj, name)))
             setattr(obj, name, value)
 
+        self.patch_attr = patch  # for tests to stub more, undone at tearDown like these
+        self.real_needs_rebuild = ui.needs_rebuild
+
         patch(ui, "run_ctl", lambda *a: (self.ctl_calls.append(a), (True, ""))[1])
         patch(ui, "effect_loaded", lambda: True)
+        patch(ui, "needs_rebuild", lambda: None)
         patch(ui, "kwin_pid", lambda: "1")
         patch(pause, "_run", lambda *a: True)
         patch(devices, "touchpad_access_missing", lambda: False)
