@@ -2,7 +2,7 @@
 
 import re
 
-from PySide6.QtCore import QProcess, Qt, Signal
+from PySide6.QtCore import QEvent, QProcess, Qt, Signal
 from PySide6.QtGui import QFontDatabase, QIcon
 from PySide6.QtWidgets import (
     QSizePolicy,
@@ -265,6 +265,14 @@ class KeyField(QLineEdit):
             self.setText(f"{self.text().rstrip(', ')}, {label}")
         self._first = False
         self.recorded.emit()
+
+    def event(self, event):
+        # Qt uses Tab to move to the next field before a key press is seen; while recording, it's a key.
+        if self.recording and event.type() == QEvent.Type.KeyPress and event.key() in (Qt.Key.Key_Tab,
+                                                                                      Qt.Key.Key_Backtab):
+            self.keyPressEvent(event)
+            return True
+        return super().event(event)
 
     def keyPressEvent(self, event):
         if not self.recording:
