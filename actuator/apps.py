@@ -1,6 +1,7 @@
 """Installed apps, from .desktop entries: names, icons, and the window class to match."""
 
 import os
+import re
 import shlex
 import shutil
 from dataclasses import dataclass
@@ -13,6 +14,7 @@ class App:
     name: str
     window_class: str  # what InputActions sees as $window_class
     icon: str
+    steam_id: str | None = None  # a Steam game's app id (its launcher runs steam://rungameid/<id>)
 
 
 def _dirs() -> list[Path]:
@@ -81,7 +83,9 @@ def installed() -> tuple[App, ...]:
             if (e.get("Type") != "Application" or e.get("NoDisplay") == "true"
                     or e.get("Hidden") == "true" or not e.get("Name") or not _runnable(e)):
                 continue
-            seen[desktop_id] = App(e["Name"], window_class(desktop_id, e.get("StartupWMClass", "")), e.get("Icon", ""))
+            steam = re.search(r"steam://rungameid/(\d+)", e.get("Exec", ""))
+            seen[desktop_id] = App(e["Name"], window_class(desktop_id, e.get("StartupWMClass", "")), e.get("Icon", ""),
+                                   steam.group(1) if steam else None)
     # Some apps ship several launchers for the same window (an installer's entry plus a manual one).
     # Bindings match the window class, so those are one app: keep the first of each.
     unique: dict[str, App] = {}
@@ -93,6 +97,14 @@ def installed() -> tuple[App, ...]:
 def by_class(window_class: str) -> App | None:
     wc = window_class.lower()
     return next((a for a in installed() if a.window_class.lower() == wc), None)
+
+
+def steam_id(app: str) -> str | None:
+    """The Steam app id of an app that's an installed Steam game, by its window class or name."""
+    key = app.lower()
+    found = next((a for a in installed() if a.steam_id and (a.window_class.lower() == key or a.name.lower() == key)),
+                 None)
+    return found.steam_id if found else None
 
 
 def display_name(window_class: str) -> str:

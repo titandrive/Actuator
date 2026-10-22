@@ -3,7 +3,60 @@
 import re
 
 WINDOW_CLASS = re.compile(r"^\$window_class\s*(==|matches)\s*(.+)$")
+WINDOW_TITLE_IS = re.compile(r"^\$window_title\s*==\s*(.+)$")
+# Apps that run games inside their own window, so every game reports the wrapper's class. A game in
+# one is told apart by its window title instead: "$window_class == gamescope" and "$window_title == X".
+WRAPPERS = {"gamescope"}
 MODIFIERS = ["ctrl", "shift", "alt", "meta"]
+
+
+def game_condition(app: str, title: str, steam_id: str | None = None) -> dict:
+    """A game's "in this app" condition: matched by its own window class, by Steam's window for it
+    (steam_app_<id>), or inside gamescope (whose window every game shares) by its window title.
+    So its bindings work however it's launched."""
+    ways: list = [app_condition(app)]  # first: says which app this is
+    if steam_id:
+        ways.append(f"$window_class == steam_app_{steam_id}")
+    ways.append({"all": ["$window_class == gamescope", f"$window_title matches (?i)^{re.escape(title)}"]})
+    return {"any": ways}
+
+
+def app_conditions(app: str, game: tuple[str, str | None] | None = None) -> list:
+    """The conditions for "in this app". game: (window title, Steam id) for a game."""
+    if game:
+        return [game_condition(app, *game)]
+    return [app_condition(app)]
+
+
+def game_app(item) -> tuple[str, str | None] | None:
+    """(app, Steam id) if this condition is a game's any-of-these, else None."""
+    if not (isinstance(item, dict) and list(item) == ["any"] and isinstance(item["any"], list)):
+        return None
+    ways = item["any"]
+    if not ways or not isinstance(ways[0], str) or not (m := WINDOW_CLASS.match(ways[0].strip())):
+        return None
+    in_gamescope = any(isinstance(w, dict) and isinstance(w.get("all"), list)
+                       and "$window_class == gamescope" in [str(x).strip() for x in w["all"]] for w in ways)
+    if not in_gamescope:
+        return None
+    steam = next((g.group(1) for w in ways if isinstance(w, str)
+                  and (g := re.match(r"^\$window_class\s*==\s*steam_app_(\d+)$", w.strip()))), None)
+    return m.group(2), steam
+
+
+def wrapped_app(items) -> tuple[list[str], str, str] | None:
+    """(the two conditions, wrapper, title) for the older "gamescope and this title" form."""
+    strings = [x for x in items if isinstance(x, str)]
+    classes = [x for x in strings if WINDOW_CLASS.match(x.strip())]
+    titles = [x for x in strings if WINDOW_TITLE_IS.match(x.strip())]
+    if len(classes) != 1 or len(titles) != 1:
+        return None
+    m = WINDOW_CLASS.match(classes[0].strip())
+    wrapper = m.group(2).strip().strip("'\"")
+    if m.group(1) != "==" or wrapper not in WRAPPERS:
+        return None
+    title = WINDOW_TITLE_IS.match(titles[0].strip()).group(1).strip().strip("'\"")
+    return [classes[0], titles[0]], wrapper, title
 
 
 def app_condition(app: str) -> str:
@@ -96,10 +149,19 @@ def split(conditions) -> tuple[str | None, str, list] | None:
     if conditions is None:
         return None, "all", []
     items = list(conditions) if isinstance(conditions, list) else [conditions]
-    app = [x for x in items if isinstance(x, str) and WINDOW_CLASS.match(x.strip())]
-    if len(app) > 1:
-        return None
-    rest = [x for x in items if not (app and x is app[0])]
+    games = [x for x in items if game_app(x)]
+    if len(games) == 1:  # a game: its any-of-these is the app
+        rest = [x for x in items if x is not games[0]]
+        app = [[games[0]]]
+    elif wrapped := wrapped_app(items):  # the older form: gamescope and its title
+        pair = wrapped[0]
+        rest = [x for x in items if not any(x is y for y in pair)]
+        app = [pair]
+    else:
+        app = [x for x in items if isinstance(x, str) and WINDOW_CLASS.match(x.strip())]
+        if len(app) > 1:
+            return None
+        rest = [x for x in items if not (app and x is app[0])]
     if all(isinstance(x, str) for x in rest):
         return (app[0] if app else None), "all", [from_text(x) for x in rest]
     if len(rest) == 1 and isinstance(rest[0], dict) and len(rest[0]) == 1:
@@ -109,10 +171,11 @@ def split(conditions) -> tuple[str | None, str, list] | None:
     return None
 
 
-def join(app: str | None, mode: str, rows: list):
-    """Back to a conditions value, or None for no conditions at all."""
+def join(app, mode: str, rows: list):
+    """Back to a conditions value, or None for no conditions at all. The app is one condition,
+    or a list of them (a game in gamescope)."""
     texts = [to_text(r) for r in rows if to_text(r)]
-    items = [app] if app else []
+    items = list(app) if isinstance(app, list) else [app] if app else []
     if texts:
         items += texts if mode == "all" else [{mode: texts}]
     return items or None

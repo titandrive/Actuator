@@ -35,6 +35,9 @@ ID_LINE = re.compile(r"^\s*-\s*id:\s*['\"]?([^'\"\s#]+)")
 DEVICE_LINE = re.compile(r"^\s*#\s*actuator:device\s+(.+?)\s*=\s*(\w+)\s*$")
 FOLDER_ICON_LINE = re.compile(r"^\s*#\s*actuator:foldericon\s+(.+?)\s*=\s*([a-z0-9-]+)\s*$")
 FOLDER_LINE = re.compile(r"^\s*#\s*actuator:folder\s+(.+?)\s*=\s*(.*?)\s*$")
+# A game: matched by its class, its Steam window and inside gamescope. "= id" is its Steam app id.
+GAME_LINE = re.compile(r"^\s*#\s*actuator:game\s+(.+?)\s*(?:=\s*(\d*)\s*)?$")
+GAMESCOPE_LINE = re.compile(r"^\s*#\s*actuator:gamescope\s+(.+?)\s*$")  # older name for a game
 PREF_LINE = re.compile(r"^\s*#\s*actuator:pref\s+(\S+)\s*=\s*(.*?)\s*$")  # Actuator's own options
 WINDOW_CLASS = re.compile(r"^\$window_class\s*(==|matches)\s*(.+)$")
 
@@ -77,6 +80,7 @@ class Config:
     device_types: dict[str, str] = field(default_factory=dict)  # named device -> mouse/touchpad/...
     labels: dict[str, str] = field(default_factory=dict)  # binding id -> the user's note
     prefs: dict[str, str] = field(default_factory=dict)  # Actuator's options, when stored in the config
+    games: dict[str, str] = field(default_factory=dict)  # game app -> its Steam app id ("" if none)
 
     @property
     def apps(self) -> list[str]:
@@ -140,7 +144,38 @@ class Config:
         else:
             self.folder_icons.pop(name, None)
 
+    def app_conditions(self, app: str) -> list:
+        """The conditions that put a binding in this app. A game's also match its Steam window
+        and, inside gamescope, its window title."""
+        from . import apps
+        from .conditions import app_conditions
+        if app in self.games:
+            return app_conditions(app, (apps.display_name(app), self.games[app] or None))
+        return app_conditions(app)
+
+    def set_game(self, app: str, steam_id: str | None, on: bool = True):
+        """Make an app a game (matched however it's launched) or a plain app again, and rewrite
+        its bindings to match."""
+        from .conditions import join, split
+        bindings = self.bindings_for("app", app)
+        if on:
+            self.games[app] = steam_id or ""
+        else:
+            self.games.pop(app, None)
+        for b in bindings:
+            _old, mode, rows = split(b.data.get("conditions"))
+            b.data["conditions"] = join(self.app_conditions(app), mode, rows)
+        self.reindex()
+
+    def needs_rewrite(self, app: str) -> bool:
+        """Whether any of this app's bindings aren't written the way its conditions now are."""
+        from .conditions import split
+        want = self.app_conditions(app)
+        as_list = lambda part: part if isinstance(part, list) else [part]  # noqa: E731
+        return any(as_list(split(b.data.get("conditions"))[0]) != want for b in self.bindings_for("app", app))
+
     def remove_app(self, app: str):
+        self.games.pop(app, None)
         self.extra_apps.discard(app)
         self.move_to_folder(app, None)
         self.remove_bindings(self.bindings_for("app", app))
@@ -173,6 +208,7 @@ class Config:
         self.reindex()
 
     def reindex(self):
+        from .conditions import game_app, wrapped_app
         self.bindings, self.buttons = [], []
         canonical: dict[str, str] = {}
         buttons: dict[str, Button] = {}
@@ -184,6 +220,13 @@ class Config:
                 scope, app = parse_scope(g.get("conditions"))
                 if app:
                     app = canonical.setdefault(app.lower(), app)
+                    items = g.get("conditions")
+                    items = items if isinstance(items, list) else [items]
+                    found = next((x for x in map(game_app, items) if x), None)
+                    if found and app not in self.games:  # a game's bindings, written as such
+                        self.games[app] = found[1] or ""
+                    elif wrapped_app(items) and app not in self.games:
+                        self.games[app] = ""
                 button = None
                 if section == "mouse" and g.get("type") == "press":
                     mb = g.get("mouse_buttons") or []
@@ -214,12 +257,16 @@ def app_key(value: str) -> str:
 def parse_scope(conditions) -> tuple[str, str | None]:
     """App if there's exactly one window class check (plus any extras the form can show),
     global if there's none, custom if the conditions are beyond the form."""
-    from .conditions import split  # local: conditions has no dependency on config
+    from .conditions import WINDOW_TITLE_IS, game_app, split  # local: conditions has no dependency on config
 
     parts = split(conditions)
     if parts is None:
         return "custom", None
     app, _mode, _rows = parts
+    if isinstance(app, list) and isinstance(app[0], dict):  # a game: named by its first way
+        return "app", app_key(game_app(app[0])[0])
+    if isinstance(app, list):  # the older gamescope form: the app is its window title
+        return "app", app_key(WINDOW_TITLE_IS.match(app[1].strip()).group(1))
     if app:
         return "app", app_key(WINDOW_CLASS.match(app.strip()).group(2))
     return "global", None
@@ -262,6 +309,10 @@ def loads(text: str, path: Path | None = None) -> Config:
             config.folder_icons[m.group(1)] = m.group(2)
         elif m := FOLDER_LINE.match(line):
             config.folders[m.group(1)] = [a.strip() for a in m.group(2).split(",") if a.strip()]
+        elif m := GAME_LINE.match(line):
+            config.games[m.group(1)] = m.group(2) or ""
+        elif m := GAMESCOPE_LINE.match(line):
+            config.games.setdefault(m.group(1), "")
         elif m := PREF_LINE.match(line):
             config.prefs[m.group(1)] = m.group(2)
     # Notes: a "# Note:" comment applies to the next binding (its "- id:" line).

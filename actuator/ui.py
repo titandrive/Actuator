@@ -27,6 +27,7 @@ from . import iconpicker
 from . import icons
 from . import REPO_URL, __version__
 from . import apps as apps_mod
+from . import conditions as conds
 from . import config as cfg
 from . import copying
 from . import diffing
@@ -124,13 +125,18 @@ INSTALL_URL = "https://wiki.inputactions.org/main/getting-started/installation/i
 DOCS_URL = "https://wiki.inputactions.org/"
 
 
-def active_window_class() -> str | None:
+def active_window(key: str = "window_class") -> str | None:
+    """A variable about the active window, from InputActions: its class, title and so on."""
     ok, out = run_ctl("variables", "list")
     if ok:
-        m = re.search(r"^window_class:\s*(.+)$", out, re.MULTILINE)
+        m = re.search(rf"^{key}:\s*(.+)$", out, re.MULTILINE)
         if m and m.group(1).strip() != "<null>":
             return m.group(1).strip()
     return None
+
+
+def active_window_class() -> str | None:
+    return active_window("window_class")
 
 
 def button_name(b: cfg.Button) -> str:
@@ -147,6 +153,7 @@ class AddAppDialog(QDialog):
     def __init__(self, parent, folders: list[str], existing: list[str] = ()):
         super().__init__(parent)
         self.setWindowTitle("Add app")
+        self.wrapper: str | None = None  # set when Pick window finds a game inside gamescope
         existing = {e.lower() for e in existing}
         self.search = QLineEdit(placeholderText="Search apps")
         self.search.setClearButtonEnabled(True)
@@ -228,6 +235,13 @@ class AddAppDialog(QDialog):
             self.hint.setText("Couldn't read a window. Try again, or pick from the list.")
             return
         self.list.setCurrentItem(None)
+        if wc in conds.WRAPPERS and (title := active_window("window_title")):
+            # A game in gamescope: its class is gamescope's, so it's known by its window title.
+            self.wrapper = wc
+            self.edit.setText(title)
+            self.hint.setText(f"Picked {title}, running in {wc}. It'll be matched by its window title.")
+            return
+        self.wrapper = None
         self.edit.setText(wc)
         app = apps_mod.by_class(wc)
         self.hint.setText(f"Picked {app.name if app else wc} ({wc}).")
@@ -1456,7 +1470,7 @@ class MainWindow(QMainWindow):
         )
         return answer == QMessageBox.StandardButton.Save
 
-    def apply_now(self, change, take_snapshot: bool = False) -> bool:
+    def apply_now(self, change, take_snapshot: bool = False, message: str | None = None) -> bool:
         """Apply an organizing change (apps, folders, button names) and write it at once.
 
         It's applied to the file as it is on disk, so unsaved binding edits stay unsaved.
@@ -1488,7 +1502,7 @@ class MainWindow(QMainWindow):
         self.future = [carried(x) for x in self.future]
         run_ctl("config", "reload")
         self._check_issues()
-        self._git_sync(old)
+        self._git_sync(old, msg=message)  # message: a short summary in place of the itemized one
         return True
 
     def save(self):
@@ -1680,6 +1694,7 @@ class MainWindow(QMainWindow):
         self._set_broken(None)
         if self.config.prefs:  # options stored in the config win, e.g. after restoring it elsewhere
             self._apply_prefs(self.config.prefs)
+        QTimer.singleShot(0, self._set_up_games)  # after this load finishes, not in the middle of it
         self.dirty = False
         self._reset_history()
         self._check_issues()
@@ -1821,6 +1836,12 @@ class MainWindow(QMainWindow):
             if current:
                 menu.addAction(f"Take out of {current}", lambda: self.move_app(app, None))
             self._add_copy_all(menu, ("app", app))
+            game = menu.addAction("Works in gamescope", lambda: self.set_game(app))
+            game.setCheckable(True)
+            game.setChecked(app in self.config.games)
+            game.setToolTip("Also match this app inside gamescope, by its window title. Steam games get "
+                            "this automatically.")
+            menu.setToolTipsVisible(True)
             menu.addSeparator()
             menu.addAction(icons.icon("list-remove"), f"Remove {apps_mod.display_name(app)}…",
                            lambda: self.remove_app(app))
@@ -1835,6 +1856,41 @@ class MainWindow(QMainWindow):
             menu.addAction(icons.icon("list-add"), "Add app…", self.add_app)
             menu.addAction(icons.icon("folder-new"), "New folder…", lambda: self.new_folder())
         menu.exec(self.sidebar.viewport().mapToGlobal(pos))
+
+    def set_game(self, app: str):
+        """Also match this app inside gamescope (by its window title), or only by its class again."""
+        on = app not in self.config.games
+        name = apps_mod.display_name(app)
+        message = f"Actuator: {name} works in gamescope" if on else f"Actuator: {name} no longer matched in gamescope"
+        if self.apply_now(lambda c: c.set_game(app, apps_mod.steam_id(app), on), take_snapshot=True,
+                          message=message):
+            self.statusBar().showMessage(
+                f"{apps_mod.display_name(app)} now works in gamescope too." if on else
+                f"{apps_mod.display_name(app)} is matched only by its own window class again.", 6000)
+            self._fill_sidebar()
+
+    def _set_up_games(self):
+        """Steam games work however they're launched (with or without gamescope): any added as plain
+        apps, or written in an older way, are set up once, when Actuator finds them."""
+        if self.broken or self.config is None:
+            return
+        todo = {}
+        for app in self.config.apps:
+            steam = apps_mod.steam_id(app)
+            if steam and (self.config.games.get(app) != steam or self.config.needs_rewrite(app)):
+                todo[app] = steam
+            elif app in self.config.games and self.config.needs_rewrite(app):
+                todo[app] = self.config.games[app] or None
+        if not todo:
+            return
+
+        def change(c):
+            for app, steam in todo.items():
+                c.set_game(app, steam)
+        names = ", ".join(apps_mod.display_name(a) for a in todo)
+        if self.apply_now(change, take_snapshot=True, message=f"Actuator: set up {names} for gamescope"):
+            self.statusBar().showMessage(f"Set up to work with or without gamescope: {names}.", 8000)
+            self._fill_sidebar()
 
     def _add_copy_all(self, menu: QMenu, source):
         items = [(b.section, d.plain(b.data)) for b in self.config.bindings_for(*source)]
@@ -1929,10 +1985,14 @@ class MainWindow(QMainWindow):
         if dialog.exec() != QDialog.DialogCode.Accepted:
             return
         app, folder = self.config.same_app(cfg.app_key(dialog.value())), dialog.folder()
+        wrapper = dialog.wrapper if dialog.edit.text().strip() else None  # picked inside gamescope
+        steam = apps_mod.steam_id(app)
 
         def change(c):
             if app not in c.apps:
                 c.add_app(app)
+            if wrapper or steam:  # a game: matched however it's launched
+                c.set_game(app, steam)
             if folder:
                 c.move_to_folder(app, folder)
         if self.apply_now(change):

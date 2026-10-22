@@ -97,8 +97,8 @@ def unique_id(config: cfg.Config, base: str) -> str:
     return f"{base}_{n}"
 
 
-def scope_conditions(scope: str, app: str | None):
-    return [conds.app_condition(app)] if scope == "app" else None
+def scope_conditions(config: cfg.Config, scope: str, app: str | None):
+    return config.app_conditions(app) if scope == "app" else None
 
 
 def default_stage(trigger_type: str) -> str:
@@ -127,7 +127,7 @@ def new_button_binding(config: cfg.Config, button: cfg.Button, scope: str, app: 
     else:
         section = "keyboard"
         data.update(type="shortcut", shortcut=button.src.split("+"), clear_modifiers=True)
-    if conds := scope_conditions(scope, app):
+    if conds := scope_conditions(config, scope, app):
         data["conditions"] = conds
     data["actions"] = [{"on": "begin", "input": [{"keyboard": []}]}]
     return section, data
@@ -147,7 +147,7 @@ def new_gesture_binding(config: cfg.Config, section: str, trigger_type: str, sco
         data["mouse_buttons"] = ["middle"]
     if section == "mouse" and trigger_type in MOTION_TYPES:
         data["mouse_buttons"] = list(MOUSE_HOLD_DEFAULT)
-    if conds := scope_conditions(scope, app):
+    if conds := scope_conditions(config, scope, app):
         data["conditions"] = conds
     data["actions"] = [{"on": default_stage(trigger_type), "input": [{"keyboard": []}]}]
     return data

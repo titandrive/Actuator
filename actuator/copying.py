@@ -8,15 +8,16 @@ from . import describe as d
 from .editor import slug, unique_id
 
 
-def retarget(data: dict, scope: str, app: str | None) -> dict | None:
+def retarget(data: dict, scope: str, app: str | None, app_conds: list[str] | None = None) -> dict | None:
     """A copy of a binding pointed at another app (or Global). None if its conditions
-    are too complex to move."""
+    are too complex to move. app_conds: that app's conditions, when it isn't matched by class."""
     parts = conds.split(data.get("conditions"))
     if parts is None:
         return None
     _old_app, mode, rows = parts
     new = copy.deepcopy(d.plain(data))
-    value = conds.join(conds.app_condition(app) if scope == "app" else None, mode, rows)
+    target = (app_conds or [conds.app_condition(app)]) if scope == "app" else None
+    value = conds.join(target, mode, rows)
     if value is None:
         new.pop("conditions", None)
     else:
@@ -43,7 +44,7 @@ def paste(config: cfg.Config, items: list[tuple[str, dict]], scope: str, app: st
     to_remove, added, skipped = [], 0, 0
     new_items = []
     for section, data in items:
-        new = retarget(data, scope, app)
+        new = retarget(data, scope, app, config.app_conditions(app) if scope == "app" else None)
         if new is None:
             skipped += 1
             continue

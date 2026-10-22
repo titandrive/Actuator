@@ -192,6 +192,45 @@ class TouchpadAccessTests(unittest.TestCase):
         self.assertEqual(devices.touchpad_paths(listing), ["/dev/input/event9"])
 
 
+class GameTests(TempConfig):
+    def test_game_matched_however_its_launched(self):
+        c = cfg.load(self.path)
+        n = len(c.bindings_for("app", "factorio"))
+        c.set_game("factorio", "427520")
+        bound = c.bindings_for("app", "factorio")
+        self.assertEqual(len(bound), n)                          # still the same app's bindings
+        own, steam, gamescope = bound[0].data["conditions"][0]["any"]
+        self.assertTrue(own.startswith("$window_class"))             # its own class, as before
+        self.assertEqual(steam, "$window_class == steam_app_427520")  # Steam's window
+        self.assertEqual(gamescope, {"all": ["$window_class == gamescope", "$window_title matches (?i)^Factorio"]})
+        writer.save(c)
+        self.assertIn("# actuator:game factorio = 427520", self.path.read_text())
+        again = cfg.load(self.path)                              # read back the same way
+        self.assertEqual(len(again.bindings_for("app", "factorio")), n)
+        self.assertEqual(again.games, {"factorio": "427520"})
+        self.assertFalse(again.needs_rewrite("factorio"))
+        # New bindings get it too; extra conditions survive; a plain app again goes back to its class.
+        data = editor.new_gesture_binding(again, "touchpad", "swipe", "app", "factorio")
+        self.assertIn("any", data["conditions"][0])
+        again.set_game("factorio", None, on=False)
+        self.assertEqual(again.games, {})
+        self.assertTrue(all(isinstance(b.data["conditions"][0], str) for b in again.bindings_for("app", "factorio")))
+
+    def test_game_conditions_split_and_join(self):
+        game = conds.game_condition("Schedule I", "Schedule I", "3164500")
+        items = [game, "$window_fullscreen"]
+        app, mode, rows = conds.split(items)
+        self.assertEqual(app, [game])
+        self.assertEqual(rows, [("Window", "is fullscreen", "")])
+        self.assertEqual(conds.join(app, mode, rows), items)
+        self.assertEqual(cfg.parse_scope(items), ("app", "Schedule I"))
+        self.assertEqual(conds.game_app(game), ("(?i)^Schedule\\ I$", "3164500"))
+        # The older "gamescope and this title" form is still read as that app.
+        self.assertEqual(cfg.parse_scope(["$window_class == gamescope", "$window_title == Schedule I"]),
+                         ("app", "Schedule I"))
+        self.assertEqual(cfg.parse_scope(["$window_title == Schedule I"]), ("global", None))
+
+
 class StrokeTests(unittest.TestCase):
     def test_stroke_actions_run_on_end(self):
         self.assertEqual(editor.default_stage("stroke"), "end")
