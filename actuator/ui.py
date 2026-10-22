@@ -15,7 +15,7 @@ from PySide6.QtGui import (
 )
 from PySide6.QtWidgets import (
     QAbstractButton, QApplication, QDialog, QTextBrowser, QListWidget, QListWidgetItem, QToolTip, QFormLayout, QSpinBox, QDialogButtonBox, QFileDialog, QFrame, QGridLayout, QHBoxLayout,
-    QComboBox, QGroupBox, QInputDialog, QLabel, QLineEdit, QMainWindow, QMenu,
+    QComboBox, QGroupBox, QInputDialog, QLabel, QLayout, QLineEdit, QMainWindow, QMenu,
     QMessageBox, QPushButton, QScrollArea, QSizePolicy,
     QSplitter, QStackedWidget, QStyledItemDelegate, QTabWidget, QToolBar, QToolButton, QTreeWidget,
     QTreeWidgetItem, QVBoxLayout, QWidget,
@@ -38,7 +38,7 @@ from . import pause
 from . import versions
 from . import writer
 from . import yaml_editor
-from .widgets import CARD_STYLE, Toggle
+from .widgets import CARD_STYLE, Toggle, WrapLabel
 from . import devices as devices_mod
 from .editor import (
     GESTURE_TYPES, BindingEditor, new_button_binding, new_gesture_binding, new_shortcut_binding,
@@ -716,15 +716,30 @@ class CaptureDialog(QDialog):
         self.src: str | None = None
         self.kind = "mouse"
         self.pause = pause.ShortcutPause()
-        self.prompt = QLabel("Press the mouse button you want to bind.\n\n"
-                             "Plasma shortcuts are paused while this is open.")
-        self.prompt.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        self.prompt.setMinimumSize(400, 140)
-        self.prompt.setFrameShape(QFrame.Shape.StyledPanel)
-        self.prompt.setStyleSheet("QLabel { border: 2px solid #d24545; border-radius: 6px; }")
-        self.found = QLabel()
-        self.found.setWordWrap(True)
+        # A compact "recording" strip: a red dot, what to do, and that shortcuts are paused.
+        self.prompt = QFrame()
+        self.prompt.setObjectName("rec")
+        self.prompt.setStyleSheet("QFrame#rec { border: 1px solid palette(mid); border-radius: 8px;"
+                                  " background: palette(base); }")
+        dot = QLabel()
+        dot.setPixmap(icons.lucide("circle", "#d24545", filled=True).pixmap(14, 14))
+        title = QLabel("Press the mouse button you want to bind")
+        title.setStyleSheet("font-weight: 600;")
+        note = QLabel("Plasma shortcuts are paused while this is open.")
+        note.setStyleSheet("color: palette(placeholder-text); font-size: 9pt;")
+        words = QVBoxLayout()
+        words.setSpacing(2)
+        words.addWidget(title)
+        words.addWidget(note)
+        pl = QHBoxLayout(self.prompt)
+        pl.setContentsMargins(14, 12, 14, 12)
+        pl.setSpacing(12)
+        pl.addWidget(dot, 0, Qt.AlignmentFlag.AlignVCenter)
+        pl.addLayout(words, 1)
+        self.found = WrapLabel()  # grows to fit, instead of spilling over the box above it
+        self.found.hide()  # until there's something to say
         layout = QVBoxLayout(self)
+        layout.setSizeConstraint(QLayout.SizeConstraint.SetMinimumSize)  # room for the message when it appears
         layout.addWidget(self.prompt)
         layout.addWidget(self.found)
         if known:
@@ -755,6 +770,7 @@ class CaptureDialog(QDialog):
         layout.addWidget(cancel, 0, Qt.AlignmentFlag.AlignRight)
         self.prompt.setFocusPolicy(Qt.FocusPolicy.StrongFocus)
         self.prompt.installEventFilter(self)
+        self.installEventFilter(self)  # a button pressed on the dialog's background counts too
         self._left_right: str | None = None
 
     def showEvent(self, event):
@@ -767,7 +783,8 @@ class CaptureDialog(QDialog):
         super().done(result)
 
     def eventFilter(self, obj, event):
-        if obj is self.prompt:
+        on_background = obj is self and event.type() == event.Type.MouseButtonPress
+        if obj is self.prompt or on_background:
             if event.type() == event.Type.MouseButtonPress:
                 name = keys.MOUSE_BUTTONS.get(event.button())
                 if name in ("left", "right"):
@@ -776,8 +793,9 @@ class CaptureDialog(QDialog):
                         self._done(name, "mouse")
                     else:
                         self._left_right = name
-                        self.found.setText(f"That's the {name} button, which you use all the time. "
-                                           f"{name.capitalize()}-click again here to bind it anyway.")
+                        self.found.setText(f"Are you sure you want to bind {name.capitalize()} click? "
+                                           "Click again to confirm.")
+                        self.found.show()
                 else:
                     self._done(name or f"button{int(event.button())}", "mouse")
                 return True
