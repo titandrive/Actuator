@@ -266,7 +266,9 @@ def snapshots() -> list[Path]:
 
 
 def write_atomic(path: Path, text: str) -> None:
-    """Replace in one step, so InputActions never sees a missing or half-written file."""
+    """Replace in one step, so InputActions never sees a missing or half-written file. A config
+    that's a link (as with GNU Stow dotfiles) is written where it points, keeping the link."""
+    path = path.resolve()
     tmp = path.with_name(f".{path.name}.actuator-tmp")
     tmp.write_text(text)
     if path.exists():

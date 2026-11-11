@@ -102,6 +102,19 @@ class SavingTests(TempConfig):
         with self.assertRaises(ValueError):
             writer.verify(c, bad)
 
+    def test_save_through_a_link_keeps_it(self):
+        real_dir = self.dir / "dotfiles"
+        real_dir.mkdir()
+        real = real_dir / "config.yaml"
+        real.write_text(self.path.read_text())
+        self.path.unlink()
+        self.path.symlink_to(real)                  # like GNU Stow
+        c = cfg.load(self.path)
+        next(b for b in c.bindings if b.id == "factorio_forward").data["actions"][0]["input"][0]["keyboard"] = ["q"]
+        writer.save(c)
+        self.assertTrue(self.path.is_symlink())     # still a link…
+        self.assertIn("keyboard: [q]", real.read_text())  # …to the updated file
+
     def test_atomic_write_keeps_permissions(self):
         os.chmod(self.path, 0o600)
         writer.save(cfg.load(self.path))

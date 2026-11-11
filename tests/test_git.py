@@ -81,6 +81,22 @@ class GitTests(TempConfig):
         self.assertLess(headings.index("## Uncategorized"), headings.index("### Firefox"))  # the rest
         self.assertNotIn("## Factorio", headings)
 
+    def test_linked_config_commits_where_it_really_is(self):
+        dots = self.dir / "dotfiles"
+        dots.mkdir()
+        git("init", "-q", "-b", "main", cwd=dots)
+        (dots / "other.txt").write_text("not ours\n")
+        real = dots / "config.yaml"
+        real.write_text(self.path.read_text())
+        linked = self.dir / "linked" / "config.yaml"
+        linked.parent.mkdir()
+        linked.symlink_to(real)
+        self.assertEqual(gitsync.repo_root(linked).resolve(), dots.resolve())
+        ok, out = gitsync.commit(linked, "Actuator: test")
+        self.assertTrue(ok, out)
+        files = git("show", "--name-only", "--format=", "HEAD", cwd=dots).stdout.split()
+        self.assertEqual(files, ["config.yaml"])               # only the config, in the dotfiles repo
+
     def test_links(self):
         git("remote", "set-url", "origin", "git@github.com:me/configs.git", cwd=self.dir)
         self.assertEqual(gitsync.web_url(self.dir), "https://github.com/me/configs")

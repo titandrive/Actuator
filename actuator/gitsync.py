@@ -21,7 +21,8 @@ def _git(folder: Path, *args: str) -> tuple[bool, str]:
 
 
 def repo_root(path: Path) -> Path | None:
-    ok, out = _git(path.parent, "rev-parse", "--show-toplevel")
+    """The repository the config file is in; for a linked config, the one its real file is in."""
+    ok, out = _git(path.resolve().parent, "rev-parse", "--show-toplevel")
     return Path(out) if ok and out else None
 
 
@@ -79,7 +80,9 @@ def message(old_text: str | None, new_text: str) -> str:
 
 def commit(path: Path, msg: str, extra: list[Path] = (), allow_empty: bool = False) -> tuple[bool, str]:
     """Commit just this file (and any extra ones, like a generated README). Other changes in the
-    repo are left alone. With allow_empty, an unchanged file still gets a commit (a backup marker)."""
+    repo are left alone. With allow_empty, an unchanged file still gets a commit (a backup marker).
+    A linked config is committed where its real file is."""
+    path = path.resolve()
     folder = path.parent
     names = [path.name] + [str(x.relative_to(folder)) for x in extra]
     ok, out = _git(folder, "add", "--", *names)

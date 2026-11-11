@@ -1714,7 +1714,7 @@ class MainWindow(QMainWindow):
         always, commit even an unchanged file (Backup Now leaves a marker in the history)."""
         if not self.feature("git_autocommit"):
             return
-        path = cfg.CONFIG_PATH
+        path = cfg.CONFIG_PATH.resolve()  # a linked config is committed where its real file is
         root = gitsync.repo_root(path)
         if root is None:
             self._show_git("warn", "Not committed: the config folder isn't a git repository",
